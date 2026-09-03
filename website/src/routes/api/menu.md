@@ -15,6 +15,7 @@
 - [function](/api/function/)
 - [instance](/api/instance/)
 - [intersect](/api/intersect/)
+- [jsonValue](/api/jsonValue/)
 - [lazy](/api/lazy/)
 - [literal](/api/literal/)
 - [looseObject](/api/looseObject/)
