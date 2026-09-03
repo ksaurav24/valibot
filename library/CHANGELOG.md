@@ -7,6 +7,7 @@ All notable changes to the library will be documented in this file.
 - Add `codePoints`, `maxCodePoints`, `minCodePoints` and `notCodePoints` validation actions to validate the number of Unicode code points (pull request #888)
 - Add `ksuid` validation action to validate KSUIDs (pull request #1370)
 - Fix `stringifyJson` action to preserve the dataset value when `JSON.stringify` returns `undefined` (pull request #1476)
+- Add `jsonValue` schema to validate JSON-serializable values (pull request #1610)
 
 ## v1.4.2 (June 28, 2026)
 
