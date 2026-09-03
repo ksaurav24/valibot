@@ -27,7 +27,7 @@ const Schema = v.jsonValue<TMessage>(message);
 
 ### Explanation
 
-With `jsonValue` you can validate that the input is a value that can be serialized and deserialized with `JSON.stringify` and `JSON.parse` without loss. This includes strings, numbers, booleans, `null`, and objects or arrays that recursively contain only these types. If the input is not a JSON value, you can use `message` to customize the error message.
+With `jsonValue` you can validate that the input matches strings, finite numbers, booleans, `null`, and objects or arrays that recursively contain only these types. Values with custom `toJSON` behavior (for example `Date`) are not specially handled; their own enumerable properties are used instead, the same way the `object` and `record` schemas treat them, and `__proto__`, `prototype`, and `constructor` keys are always excluded from objects for security reasons. Also note that very deeply nested input can exceed the call stack, so untrusted input should have its depth bounded before parsing. If the input is not a JSON value, you can use `message` to customize the error message.
 
 ## Returns
 

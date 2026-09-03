@@ -82,7 +82,7 @@ import * as v from 'valibot';
 const JsonSchema = v.jsonValue();
 ```
 
-Under the hood, `jsonValue` is equivalent to the following composition, which is a good illustration of how `lazy` enables recursive schemas:
+The same shape can also be built by hand, which is a good illustration of how `lazy` enables recursive schemas (note that `jsonValue` is implemented directly and reports different issues than this hand-rolled composition):
 
 ```ts
 import * as v from 'valibot';
