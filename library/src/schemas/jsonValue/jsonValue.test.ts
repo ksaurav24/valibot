@@ -102,10 +102,10 @@ describe('jsonValue', () => {
     });
 
     // Hint: This documents the intentional, precedent-based behavior of the
-    // object branch (matches `object`/`record`): non-plain objects such as
-    // `Date`, `Map`, and `Set` are not specially handled. Their own
-    // enumerable properties are used, which for these built-ins means no
-    // own enumerable properties at all, so they are accepted as `{}`.
+    // object branch (matches `record`): non-plain objects such as `Date`,
+    // `Map`, and `Set` are not specially handled. Their own enumerable
+    // properties are used, which for these built-ins means no own
+    // enumerable properties at all, so they are accepted as `{}`.
     test('for Date object', () => {
       expect(schema['~run']({ value: new Date() }, {})).toStrictEqual({
         typed: true,
@@ -277,6 +277,232 @@ describe('jsonValue', () => {
           },
         ],
       } satisfies FailureDataset<InferIssue<typeof schema>>);
+    });
+
+    test('for multiple wrong values nested in an array', () => {
+      const input = ['foo', undefined, 'bar', undefined];
+      const undefinedIssue = {
+        kind: 'schema',
+        type: 'jsonValue',
+        input: undefined,
+        expected: '(string | number | boolean | null | Object | Array)',
+        received: 'undefined',
+        message:
+          'Invalid type: Expected (string | number | boolean | null | Object | Array) but received undefined',
+        requirement: undefined,
+        issues: undefined,
+        lang: undefined,
+        abortEarly: undefined,
+        abortPipeEarly: undefined,
+      } as const;
+      expect(schema['~run']({ value: input }, {})).toStrictEqual({
+        typed: false,
+        value: input,
+        issues: [
+          {
+            ...undefinedIssue,
+            path: [
+              {
+                type: 'array',
+                origin: 'value',
+                input,
+                key: 1,
+                value: undefined,
+              },
+            ],
+          },
+          {
+            ...undefinedIssue,
+            path: [
+              {
+                type: 'array',
+                origin: 'value',
+                input,
+                key: 3,
+                value: undefined,
+              },
+            ],
+          },
+        ],
+      } satisfies FailureDataset<InferIssue<typeof schema>>);
+    });
+
+    test('with abort early for an object', () => {
+      const input = { a: undefined, b: undefined };
+      expect(
+        schema['~run']({ value: input }, { abortEarly: true })
+      ).toStrictEqual({
+        typed: false,
+        value: {},
+        issues: [
+          {
+            kind: 'schema',
+            type: 'jsonValue',
+            input: undefined,
+            expected: '(string | number | boolean | null | Object | Array)',
+            received: 'undefined',
+            message:
+              'Invalid type: Expected (string | number | boolean | null | Object | Array) but received undefined',
+            requirement: undefined,
+            issues: undefined,
+            lang: undefined,
+            abortEarly: true,
+            abortPipeEarly: undefined,
+            path: [
+              {
+                type: 'object',
+                origin: 'value',
+                input,
+                key: 'a',
+                value: undefined,
+              },
+            ],
+          },
+        ],
+      } satisfies FailureDataset<InferIssue<typeof schema>>);
+    });
+
+    test('for wrong values nested through mixed array and object branches', () => {
+      const list = [1, undefined];
+      const meta = { ok: true, bad: undefined };
+      const input = { list, meta };
+      const undefinedIssue = {
+        kind: 'schema',
+        type: 'jsonValue',
+        input: undefined,
+        expected: '(string | number | boolean | null | Object | Array)',
+        received: 'undefined',
+        message:
+          'Invalid type: Expected (string | number | boolean | null | Object | Array) but received undefined',
+        requirement: undefined,
+        issues: undefined,
+        lang: undefined,
+        abortEarly: undefined,
+        abortPipeEarly: undefined,
+      } as const;
+      expect(schema['~run']({ value: input }, {})).toStrictEqual({
+        typed: false,
+        value: { list, meta },
+        issues: [
+          {
+            ...undefinedIssue,
+            path: [
+              {
+                type: 'object',
+                origin: 'value',
+                input,
+                key: 'list',
+                value: list,
+              },
+              {
+                type: 'array',
+                origin: 'value',
+                input: list,
+                key: 1,
+                value: undefined,
+              },
+            ],
+          },
+          {
+            ...undefinedIssue,
+            path: [
+              {
+                type: 'object',
+                origin: 'value',
+                input,
+                key: 'meta',
+                value: meta,
+              },
+              {
+                type: 'object',
+                origin: 'value',
+                input: meta,
+                key: 'bad',
+                value: undefined,
+              },
+            ],
+          },
+        ],
+      } satisfies FailureDataset<InferIssue<typeof schema>>);
+    });
+
+    test('for custom message applied to a nested issue', () => {
+      const customSchema = jsonValue('custom message');
+      const input = { a: [1, undefined] };
+      const result = customSchema['~run']({ value: input }, {});
+      expect(result.issues?.[0].message).toBe('custom message');
+    });
+  });
+
+  describe('should reject circular references', () => {
+    const schema = jsonValue();
+
+    test('for an object referencing itself', () => {
+      // eslint-disable-next-line @typescript-eslint/no-explicit-any
+      const input: any = { foo: 1 };
+      input.self = input;
+      const result = schema['~run']({ value: input }, {});
+      expect(result.typed).toBe(false);
+      expect(result.issues).toHaveLength(1);
+      expect(result.issues?.[0].path).toStrictEqual([
+        { type: 'object', origin: 'value', input, key: 'self', value: input },
+      ]);
+    });
+
+    test('for an array referencing itself', () => {
+      // eslint-disable-next-line @typescript-eslint/no-explicit-any
+      const input: any[] = [1, 2];
+      input.push(input);
+      const result = schema['~run']({ value: input }, {});
+      expect(result.typed).toBe(false);
+      expect(result.issues).toHaveLength(1);
+      expect(result.issues?.[0].path).toStrictEqual([
+        { type: 'array', origin: 'value', input, key: 2, value: input },
+      ]);
+    });
+
+    test('for an object referencing an ancestor two levels up', () => {
+      // eslint-disable-next-line @typescript-eslint/no-explicit-any
+      const root: any = { child: {} };
+      root.child.grandchild = { root };
+      const result = schema['~run']({ value: root }, {});
+      expect(result.typed).toBe(false);
+      expect(result.issues).toHaveLength(1);
+      expect(result.issues?.[0].path).toStrictEqual([
+        {
+          type: 'object',
+          origin: 'value',
+          input: root,
+          key: 'child',
+          value: root.child,
+        },
+        {
+          type: 'object',
+          origin: 'value',
+          input: root.child,
+          key: 'grandchild',
+          value: root.child.grandchild,
+        },
+        {
+          type: 'object',
+          origin: 'value',
+          input: root.child.grandchild,
+          key: 'root',
+          value: root,
+        },
+      ]);
+    });
+
+    test('for the same object reused in sibling branches, not a cycle', () => {
+      const shared = { x: 1 };
+      const input = { a: shared, b: shared };
+      expectNoSchemaIssue(schema, [input]);
+    });
+
+    test('for the same array reused as sibling elements, not a cycle', () => {
+      const shared = [1, 2];
+      const input = [shared, shared];
+      expectNoSchemaIssue(schema, [input]);
     });
   });
 });

@@ -5,6 +5,10 @@ import type { BaseIssue } from '../../types/index.ts';
  *
  * Represents strings, finite numbers, booleans, `null`, and objects or
  * arrays that recursively contain only these types.
+ *
+ * Hint: TypeScript has no dedicated type for finite numbers, so `NaN`,
+ * `Infinity`, and `-Infinity` type-check as `JsonValue` even though the
+ * `jsonValue` schema rejects them at runtime.
  */
 export type JsonValue =
   | string
