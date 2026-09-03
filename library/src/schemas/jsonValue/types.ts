@@ -3,8 +3,8 @@ import type { BaseIssue } from '../../types/index.ts';
 /**
  * JSON value type.
  *
- * Represents any value that can be serialized and deserialized with
- * `JSON.stringify` and `JSON.parse` without loss.
+ * Represents strings, finite numbers, booleans, `null`, and objects or
+ * arrays that recursively contain only these types.
  */
 export type JsonValue =
   | string

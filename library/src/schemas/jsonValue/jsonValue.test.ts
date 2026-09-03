@@ -53,7 +53,7 @@ describe('jsonValue', () => {
     });
 
     test('for numbers', () => {
-      expectNoSchemaIssue(schema, [0, 123, -123, 1.23, NaN, Infinity]);
+      expectNoSchemaIssue(schema, [0, 123, -123, 1.23]);
     });
 
     test('for booleans', () => {
@@ -90,6 +90,44 @@ describe('jsonValue', () => {
         value: { foo: 456 },
       });
     });
+
+    test('for object with constructor and prototype keys', () => {
+      const input = JSON.parse(
+        '{"constructor":1,"prototype":2,"__proto__":3,"ok":4}'
+      );
+      expect(schema['~run']({ value: input }, {})).toStrictEqual({
+        typed: true,
+        value: { ok: 4 },
+      });
+    });
+
+    // Hint: This documents the intentional, precedent-based behavior of the
+    // object branch (matches `object`/`record`): non-plain objects such as
+    // `Date`, `Map`, and `Set` are not specially handled. Their own
+    // enumerable properties are used, which for these built-ins means no
+    // own enumerable properties at all, so they are accepted as `{}`.
+    test('for Date object', () => {
+      expect(schema['~run']({ value: new Date() }, {})).toStrictEqual({
+        typed: true,
+        value: {},
+      });
+    });
+
+    test('for Map object', () => {
+      expect(
+        schema['~run']({ value: new Map([['foo', 'bar']]) }, {})
+      ).toStrictEqual({
+        typed: true,
+        value: {},
+      });
+    });
+
+    test('for Set object', () => {
+      expect(schema['~run']({ value: new Set([1, 2, 3]) }, {})).toStrictEqual({
+        typed: true,
+        value: {},
+      });
+    });
   });
 
   describe('should return dataset with issues', () => {
@@ -122,6 +160,10 @@ describe('jsonValue', () => {
 
     test('for bigints', () => {
       expectSchemaIssue(schema, baseIssue, [0n, 123n]);
+    });
+
+    test('for NaN and Infinity', () => {
+      expectSchemaIssue(schema, baseIssue, [NaN, Infinity, -Infinity]);
     });
   });
 

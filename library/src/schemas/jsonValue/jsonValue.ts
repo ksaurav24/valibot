@@ -39,10 +39,14 @@ export interface JsonValueSchema<
 /**
  * Creates a JSON value schema.
  *
- * Hint: This schema matches any value that can be serialized and
- * deserialized with `JSON.stringify` and `JSON.parse` without loss, i.e.
- * strings, numbers, booleans, `null`, and objects or arrays that
- * recursively contain only these types.
+ * Hint: This schema matches strings, finite numbers, booleans, `null`, and
+ * objects or arrays that recursively contain only these types. Values with
+ * custom `toJSON` behavior (for example `Date`) are not specially handled;
+ * their own enumerable properties are used instead, the same way the
+ * `object` and `record` schemas treat them, and `__proto__`, `prototype`,
+ * and `constructor` keys are always excluded from objects for security
+ * reasons. Also note that very deeply nested input can exceed the call
+ * stack, so untrusted input should have its depth bounded before parsing.
  *
  * @returns A JSON value schema.
  */
@@ -80,7 +84,7 @@ export function jsonValue(
       // If input is a primitive JSON value, it is valid as is
       if (
         typeof input === 'string' ||
-        typeof input === 'number' ||
+        (typeof input === 'number' && Number.isFinite(input)) ||
         typeof input === 'boolean' ||
         input === null
       ) {
