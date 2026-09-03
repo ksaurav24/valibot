@@ -497,6 +497,7 @@
 - [IsoWeekIssue](/api/IsoWeekIssue/)
 - [IssueDotPath](/api/IssueDotPath/)
 - [IssuePathItem](/api/IssuePathItem/)
+- [JsonValue](/api/JsonValue/)
 - [JsonValueIssue](/api/JsonValueIssue/)
 - [JsonValueSchema](/api/JsonValueSchema/)
 - [JwsCompactAction](/api/JwsCompactAction/)
