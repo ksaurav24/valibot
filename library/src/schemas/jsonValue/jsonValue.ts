@@ -9,8 +9,8 @@ import type {
 } from '../../types/index.ts';
 import {
   _addIssue,
-  _getStandardProps,
   _isValidObjectKey,
+  _standardSchema,
 } from '../../utils/index.ts';
 import type { JsonValue, JsonValueIssue } from './types.ts';
 
@@ -259,18 +259,15 @@ export function jsonValue<
 export function jsonValue(
   message?: ErrorMessage<JsonValueIssue>
 ): JsonValueSchema<ErrorMessage<JsonValueIssue> | undefined> {
-  return {
+  return _standardSchema({
     kind: 'schema',
     type: 'jsonValue',
     reference: jsonValue,
     expects: '(string | number | boolean | null | Object | Array)',
     async: false,
     message,
-    get '~standard'() {
-      return _getStandardProps(this);
-    },
     '~run'(dataset, config) {
       return _runJsonValue(this, dataset, config, new WeakSet());
     },
-  };
+  });
 }
