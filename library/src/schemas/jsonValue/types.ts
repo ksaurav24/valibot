@@ -9,6 +9,11 @@ import type { BaseIssue } from '../../types/index.ts';
  * Hint: TypeScript has no dedicated type for finite numbers, so `NaN`,
  * `Infinity`, and `-Infinity` type-check as `JsonValue` even though the
  * `jsonValue` schema rejects them at runtime.
+ *
+ * Hint: The object variant's index signature means an `interface`-declared
+ * object type is only assignable to `JsonValue` if it also declares a
+ * matching index signature; otherwise, add an index signature to the
+ * interface, or convert it to a `type` alias, to assign it.
  */
 export type JsonValue =
   | string

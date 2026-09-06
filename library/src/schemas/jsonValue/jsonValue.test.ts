@@ -72,6 +72,25 @@ describe('jsonValue', () => {
       expectNoSchemaIssue(schema, [{}, { foo: 'bar', baz: 123 }]);
     });
 
+    // Hint: This documents that only an object's own, enumerable,
+    // string-keyed properties are checked, the same way `JSON.stringify`
+    // ignores non-enumerable properties and symbol keys.
+    test('for object with non-enumerable and symbol-keyed properties', () => {
+      const input: Record<string | symbol, unknown> = { foo: 'bar' };
+      Object.defineProperty(input, 'hidden', {
+        value: () => {
+          /* not a JSON value, but never visited */
+        },
+        enumerable: false,
+      });
+      input[Symbol('tag')] = () => {
+        /* not a JSON value, but never visited */
+      };
+      const result = schema['~run']({ value: input }, {});
+      expect(result).toStrictEqual({ typed: true, value: input });
+      expect(result.value).toBe(input);
+    });
+
     test('for deeply nested structures', () => {
       expectNoSchemaIssue(schema, [
         {
@@ -210,6 +229,45 @@ describe('jsonValue', () => {
       }
       Foo.prototype.constructor = Object;
       expectSchemaIssue(schema, baseIssue, [new Foo()], 'Object');
+    });
+
+    // Hint: Unlike `record`, this schema never copies the input into a new
+    // array, so accepting an `Array` subclass instance would return it as
+    // is, typed as `JsonValue`, even though it may carry extra behavior or
+    // state beyond its indexed items.
+    test('for array subclass instances', () => {
+      class MyArray extends Array {}
+      expectSchemaIssue(schema, baseIssue, [MyArray.from([1, 2])]);
+    });
+
+    // Hint: This documents that a hostile prototype whose `getPrototypeOf`
+    // trap throws is treated as not plain, instead of making validation
+    // throw. Only the prototype is a proxy here; `input` itself is a
+    // regular object, so describing it in the issue message never invokes
+    // the trap either.
+    // Hint: This asserts on individual fields rather than with
+    // `expectSchemaIssue`'s `toStrictEqual`, since deep-equality matchers
+    // inspect the compared value's prototype and would trigger the same
+    // trap themselves, unrelated to the schema's own behavior.
+    test('for object with throwing getPrototypeOf trap in its prototype chain', () => {
+      const evilProto = new Proxy(
+        {},
+        {
+          getPrototypeOf() {
+            throw new Error('should not be called');
+          },
+        }
+      );
+      const input: object = Object.create(evilProto);
+      let result: FailureDataset<InferIssue<typeof schema>> | undefined;
+      expect(() => {
+        result = schema['~run']({ value: input }, {}) as FailureDataset<
+          InferIssue<typeof schema>
+        >;
+      }).not.toThrow();
+      expect(result?.typed).toBe(false);
+      expect(result?.issues).toHaveLength(1);
+      expect(result?.issues?.[0].received).toBe('Object');
     });
 
     // Hint: This documents that the plain-object check also excludes a
@@ -489,6 +547,20 @@ describe('jsonValue', () => {
       } satisfies FailureDataset<InferIssue<typeof schema>>);
     });
 
+    // Hint: This documents that a sparse array's hole is read as `undefined`
+    // and rejected like any other invalid item, unlike `JSON.stringify`,
+    // which substitutes `null` for a hole.
+    test('for a hole in a sparse array', () => {
+      const input = [1, , 3]; // eslint-disable-line no-sparse-arrays
+      const result = schema['~run']({ value: input }, {});
+      expect(result.typed).toBe(false);
+      expect(result.issues).toHaveLength(1);
+      expect(result.issues?.[0].received).toBe('undefined');
+      expect(result.issues?.[0].path).toStrictEqual([
+        { type: 'array', origin: 'value', input, key: 1, value: undefined },
+      ]);
+    });
+
     test('for custom message applied to a nested issue', () => {
       const customSchema = jsonValue('custom message');
       const input = { a: [1, undefined] };
@@ -500,6 +572,11 @@ describe('jsonValue', () => {
   describe('should reject circular references', () => {
     const schema = jsonValue();
 
+    // Hint: `received` is explicitly set to `'circular reference'` rather
+    // than left to describe `input`'s type (which would read `Object` or
+    // `Array`, already present in the `expected` list, and so would be
+    // self-contradictory: "Expected (... | Object | ...) but received
+    // Object").
     test('for an object referencing itself', () => {
       // eslint-disable-next-line @typescript-eslint/no-explicit-any
       const input: any = { foo: 1 };
@@ -507,6 +584,10 @@ describe('jsonValue', () => {
       const result = schema['~run']({ value: input }, {});
       expect(result.typed).toBe(false);
       expect(result.issues).toHaveLength(1);
+      expect(result.issues?.[0].received).toBe('circular reference');
+      expect(result.issues?.[0].message).toBe(
+        'Invalid type: Expected (string | number | boolean | null | Object | Array) but received circular reference'
+      );
       expect(result.issues?.[0].path).toStrictEqual([
         { type: 'object', origin: 'value', input, key: 'self', value: input },
       ]);
@@ -519,6 +600,7 @@ describe('jsonValue', () => {
       const result = schema['~run']({ value: input }, {});
       expect(result.typed).toBe(false);
       expect(result.issues).toHaveLength(1);
+      expect(result.issues?.[0].received).toBe('circular reference');
       expect(result.issues?.[0].path).toStrictEqual([
         { type: 'array', origin: 'value', input, key: 2, value: input },
       ]);
@@ -566,6 +648,33 @@ describe('jsonValue', () => {
       const shared = [1, 2];
       const input = [shared, shared];
       expectNoSchemaIssue(schema, [input]);
+    });
+
+    // Hint: This documents that a shared, non-circular value referenced
+    // from multiple places is validated once, not once per reference,
+    // which would otherwise cost time exponential in the number of
+    // references to it (see `_runJsonValue`'s `validated` hint). A getter
+    // call count is asserted instead of wall-clock time, since the latter
+    // would be flaky in CI.
+    test('validates a value shared across many references only once', () => {
+      let reads = 0;
+      const shared: unknown = {};
+      Object.defineProperty(shared, 'x', {
+        enumerable: true,
+        get() {
+          reads++;
+          return 1;
+        },
+      });
+      // eslint-disable-next-line @typescript-eslint/no-explicit-any
+      let input: any = shared;
+      for (let level = 0; level < 10; level++) {
+        input = { left: input, right: input };
+      }
+      const result = schema['~run']({ value: input }, {});
+      expect(result.typed).toBe(true);
+      expect(result.issues).toBeUndefined();
+      expect(reads).toBe(1);
     });
   });
 });

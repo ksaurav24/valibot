@@ -35,6 +35,30 @@ export interface JsonValueSchema<
 }
 
 /**
+ * Checks whether a prototype chain terminates in `null` within one more
+ * hop, which every realm's real `Object.prototype` does (its own
+ * prototype is `null`), and no other built-in or class prototype does,
+ * since they all (directly or transitively) inherit from
+ * `Object.prototype`.
+ *
+ * Hint: `proto` or a prototype further up its chain may be a `Proxy`
+ * whose `getPrototypeOf` trap throws. Such a failure is treated as the
+ * chain not terminating in `null`, so a hostile prototype cannot abort
+ * validation.
+ *
+ * @param proto The prototype to check, or `null`.
+ *
+ * @returns Whether the prototype chain is plain-object-shaped.
+ */
+function _isPlainPrototype(proto: object | null): boolean {
+  try {
+    return proto === null || Object.getPrototypeOf(proto) === null;
+  } catch {
+    return false;
+  }
+}
+
+/**
  * Checks whether an object is a plain object, in a way that also accepts a
  * plain object created in another JavaScript realm (for example another
  * `vm` context or iframe), since such an object has a different
@@ -44,19 +68,66 @@ export interface JsonValueSchema<
  * realm's `Object.prototype` by reference, or reading the prototype's
  * `constructor` property (which may be a throwing getter or a reassigned,
  * spoofable value), this checks the shape of the prototype chain itself:
- * every realm's `Object.prototype` has `null` as its own prototype, and no
- * other built-in or class prototype does, since they all inherit from
- * `Object.prototype` (directly or transitively). So `input` is a plain
- * object if and only if its prototype is `null` (for example
- * `Object.create(null)`) or its prototype's prototype is `null`.
+ * `input` is treated as a plain object if and only if its prototype is
+ * `null` (for example `Object.create(null)`) or its prototype's prototype
+ * is `null`.
+ *
+ * Hint: This is a heuristic, not a sound check, and is not attacker-proof.
+ * It can be defeated by a `Proxy` whose `getPrototypeOf` trap fakes a
+ * shorter chain (for example making a `Map` or `Date` report a `null`
+ * prototype), or by an object whose real prototype chain was deliberately
+ * shortened (for example `Object.setPrototypeOf(Foo.prototype, null)`).
+ * Both require the caller's own code, or code it already trusted enough to
+ * run in the same realm, to construct such a value; there is no
+ * in-language check that can be relied on against that threat model. This
+ * check only guards against ordinary, non-adversarial inputs, such as a
+ * `Date` or class instance passed in by mistake.
  *
  * @param input The object to check.
  *
  * @returns Whether the object is a plain object.
  */
 function _isPlainObject(input: object): boolean {
-  const proto: unknown = Object.getPrototypeOf(input);
-  return proto === null || Object.getPrototypeOf(proto) === null;
+  try {
+    return _isPlainPrototype(Object.getPrototypeOf(input) as object | null);
+  } catch {
+    return false;
+  }
+}
+
+/**
+ * Checks whether an array is a plain array, meaning not an instance of an
+ * `Array` subclass. Since `jsonValue` never copies its input, accepting a
+ * subclass instance would return it as is, typed as `JsonValue`, even
+ * though it may carry extra behavior or state beyond its indexed items.
+ *
+ * Hint: The caller already established `input` is a real array via
+ * `Array.isArray`, which (unlike reading `input`'s prototype) cannot be
+ * spoofed by a `Proxy`. So this only checks that its prototype is
+ * `Array.prototype`-shaped: this realm's real `Array.prototype` (or,
+ * cross-realm, an equivalent one) is itself plain-object-shaped one hop
+ * up, the same way this realm's real `Object.prototype` is plain-shaped
+ * for a plain object. An array whose prototype was explicitly set to
+ * `null` is also accepted, matching how a plain object created with
+ * `Object.create(null)` is accepted, even though such an array is a rare,
+ * deliberate construction rather than something `JSON.parse` would ever
+ * produce.
+ *
+ * Hint: Same limitation as `_isPlainObject`: a `Proxy` wrapping a real
+ * `Array` subclass instance can still fake its own `getPrototypeOf` result
+ * to look like a plain array.
+ *
+ * @param input The array to check.
+ *
+ * @returns Whether the array is a plain array.
+ */
+function _isPlainArray(input: object): boolean {
+  try {
+    const proto: unknown = Object.getPrototypeOf(input);
+    return proto === null || _isPlainObject(proto as object);
+  } catch {
+    return false;
+  }
 }
 
 /**
@@ -78,10 +149,24 @@ function _isPlainObject(input: object): boolean {
  * once in sibling branches is still valid. Only a value that references one
  * of its own ancestors forms a cycle and is rejected.
  *
+ * Hint: `validated` tracks arrays and objects that were already found fully
+ * valid (with no issues) via some other reference to them. A shared,
+ * non-circular value referenced from many places (for example a diamond-
+ * shaped or deeply reused object graph) would otherwise be re-walked once
+ * per reference to it, which costs time exponential in the number of
+ * references. A value only ever enters `validated` after it is removed
+ * from `visiting` with zero issues collected, at which point it is
+ * necessarily acyclic (any cycle through it would have been caught while
+ * it was still on the active path) and fully valid, so accepting it again
+ * without re-walking it cannot change the outcome, and does not affect the
+ * issues or paths reported for any other, actually invalid occurrence of
+ * the same value.
+ *
  * @param schema The JSON value schema.
  * @param dataset The input dataset.
  * @param config The configuration.
  * @param visiting The arrays and objects on the active recursion path.
+ * @param validated The arrays and objects already found fully valid.
  *
  * @returns The output dataset.
  */
@@ -89,7 +174,8 @@ function _runJsonValue(
   schema: JsonValueSchema<ErrorMessage<JsonValueIssue> | undefined>,
   dataset: UnknownDataset,
   config: Config<JsonValueIssue>,
-  visiting: WeakSet<object>
+  visiting: WeakSet<object>,
+  validated: WeakSet<object>
 ): OutputDataset<JsonValue, JsonValueIssue> {
   // Get input value from dataset
   const input = dataset.value;
@@ -107,67 +193,98 @@ function _runJsonValue(
     // If input is an array or object, check it for circular references
     // and then check each item or entry recursively
   } else if (typeof input === 'object') {
-    // If input references one of its own ancestors, add JSON value issue
-    if (visiting.has(input)) {
-      _addIssue(schema, 'type', dataset, config);
-
-      // If input is an array, check each item recursively
-    } else if (Array.isArray(input)) {
-      // Track input as being visited for the duration of this recursion
-      visiting.add(input);
-
+    // If input was already found fully valid via another reference to it,
+    // accept it again without re-walking it
+    if (validated.has(input)) {
       // @ts-expect-error
       dataset.typed = true;
 
-      // Check each array item recursively by reusing this same schema
-      // Hint: `dataset.value` is left untouched, so the input array itself
-      // is returned as is, unmodified
-      for (let key = 0; key < input.length; key++) {
-        const value: unknown = input[key];
-        const itemDataset = _runJsonValue(schema, { value }, config, visiting);
+      // If input references one of its own ancestors, add JSON value issue
+    } else if (visiting.has(input)) {
+      _addIssue(schema, 'type', dataset, config, {
+        received: 'circular reference',
+      });
 
-        // If there are issues, capture them
-        if (itemDataset.issues) {
-          // Create array path item
-          const pathItem: ArrayPathItem = {
-            type: 'array',
-            origin: 'value',
-            input,
-            key,
-            value,
-          };
+      // If input is an array, check each item recursively
+    } else if (Array.isArray(input)) {
+      // If input is not a plain array, add JSON value issue
+      // Hint: Unlike `record`, this schema never copies the input into a
+      // new array. If an instance of an `Array` subclass were accepted
+      // here, it would be returned as is and typed as `JsonValue`, even
+      // though it may carry extra behavior or state.
+      if (!_isPlainArray(input)) {
+        _addIssue(schema, 'type', dataset, config);
 
-          // Add modified item dataset issues to issues
-          for (const issue of itemDataset.issues) {
-            if (issue.path) {
-              issue.path.unshift(pathItem);
-            } else {
+        // Otherwise, check each item recursively
+      } else {
+        // Track input as being visited for the duration of this recursion
+        visiting.add(input);
+
+        // @ts-expect-error
+        dataset.typed = true;
+
+        // Check each array item recursively by reusing this same schema
+        // Hint: `dataset.value` is left untouched, so the input array itself
+        // is returned as is, unmodified
+        for (let key = 0; key < input.length; key++) {
+          const value: unknown = input[key];
+          const itemDataset = _runJsonValue(
+            schema,
+            { value },
+            config,
+            visiting,
+            validated
+          );
+
+          // If there are issues, capture them
+          if (itemDataset.issues) {
+            // Create array path item
+            const pathItem: ArrayPathItem = {
+              type: 'array',
+              origin: 'value',
+              input,
+              key,
+              value,
+            };
+
+            // Add modified item dataset issues to issues
+            for (const issue of itemDataset.issues) {
+              if (issue.path) {
+                issue.path.unshift(pathItem);
+              } else {
+                // @ts-expect-error
+                issue.path = [pathItem];
+              }
               // @ts-expect-error
-              issue.path = [pathItem];
+              dataset.issues?.push(issue);
             }
-            // @ts-expect-error
-            dataset.issues?.push(issue);
-          }
-          if (!dataset.issues) {
-            // @ts-expect-error
-            dataset.issues = itemDataset.issues;
+            if (!dataset.issues) {
+              // @ts-expect-error
+              dataset.issues = itemDataset.issues;
+            }
+
+            // If necessary, abort early
+            if (config.abortEarly) {
+              dataset.typed = false;
+              break;
+            }
           }
 
-          // If necessary, abort early
-          if (config.abortEarly) {
+          // If not typed, set typed to `false`
+          if (!itemDataset.typed) {
             dataset.typed = false;
-            break;
           }
         }
 
-        // If not typed, set typed to `false`
-        if (!itemDataset.typed) {
-          dataset.typed = false;
+        // Input is no longer on the active recursion path
+        visiting.delete(input);
+
+        // If no issues were collected, input and everything it contains is
+        // fully valid, so remember that for any other reference to it
+        if (!dataset.issues) {
+          validated.add(input);
         }
       }
-
-      // Input is no longer on the active recursion path
-      visiting.delete(input);
 
       // If input is not a plain object, add JSON value issue
       // Hint: Unlike `record`, this schema never copies the input into a
@@ -200,7 +317,8 @@ function _runJsonValue(
             schema,
             { value },
             config,
-            visiting
+            visiting,
+            validated
           );
 
           // If there are issues, capture them
@@ -246,6 +364,12 @@ function _runJsonValue(
 
       // Input is no longer on the active recursion path
       visiting.delete(input);
+
+      // If no issues were collected, input and everything it contains is
+      // fully valid, so remember that for any other reference to it
+      if (!dataset.issues) {
+        validated.add(input);
+      }
     }
 
     // Otherwise, add JSON value issue
@@ -270,15 +394,20 @@ function _runJsonValue(
  * Because the input is not copied, mutating the returned value also
  * mutates the original input value. An object is only accepted if it is a
  * plain object (including one created in another JavaScript realm, such as
- * a `vm` context or iframe); instances of other classes (for example
- * `Date`, `Map`, or a custom class), including ones with no own enumerable
- * properties, are rejected with an issue, since the input is never copied
- * and so could otherwise be returned as a live instance typed as
- * `JsonValue`. An object or array that references itself,
- * directly or through a nested value, is rejected with an issue instead of
- * being followed. Also note that very deeply nested input can exceed the
- * call stack, so untrusted input should have its depth bounded before
- * parsing.
+ * a `vm` context or iframe), and an array is only accepted if it is a
+ * plain array, not an instance of an `Array` subclass; instances of other
+ * classes (for example `Date`, `Map`, or a custom class), including ones
+ * with no own enumerable properties, are rejected with an issue, since the
+ * input is never copied and so could otherwise be returned as a live
+ * instance typed as `JsonValue`. This plain-object and plain-array check is
+ * a heuristic for ordinary, non-adversarial input (such as a `Date` passed
+ * in by mistake); it is not a sound, attacker-proof guarantee, since a
+ * `Proxy` can fake its own prototype, or a class's prototype chain can be
+ * deliberately shortened to look plain. An object or array that
+ * references itself, directly or through a nested value, is rejected with
+ * an issue instead of being followed. Also note that very deeply nested
+ * input can exceed the call stack, so untrusted input should have its
+ * depth bounded before parsing.
  *
  * @returns A JSON value schema.
  */
@@ -307,7 +436,7 @@ export function jsonValue(
     async: false,
     message,
     '~run'(dataset, config) {
-      return _runJsonValue(this, dataset, config, new WeakSet());
+      return _runJsonValue(this, dataset, config, new WeakSet(), new WeakSet());
     },
   });
 }
