@@ -164,6 +164,25 @@ describe('jsonValue', () => {
         iframe.remove();
       }
     });
+
+    // Hint: This documents that a plain array created in another realm is
+    // still accepted, since its prototype is itself a real array (via
+    // `Array.isArray`) that is otherwise plain-object-shaped, even though
+    // it is not `===` to this realm's `Array.prototype`.
+    test('for plain array from another realm', () => {
+      const iframe = document.createElement('iframe');
+      document.body.appendChild(iframe);
+      try {
+        const otherWindow = iframe.contentWindow as unknown as typeof window;
+        const input: unknown[] = [1, 'two', false];
+        Object.setPrototypeOf(input, otherWindow.Array.prototype);
+        const result = schema['~run']({ value: input }, {});
+        expect(result).toStrictEqual({ typed: true, value: input });
+        expect(result.value).toBe(input);
+      } finally {
+        iframe.remove();
+      }
+    });
   });
 
   describe('should return dataset with issues', () => {
@@ -238,6 +257,18 @@ describe('jsonValue', () => {
     test('for array subclass instances', () => {
       class MyArray extends Array {}
       expectSchemaIssue(schema, baseIssue, [MyArray.from([1, 2])]);
+    });
+
+    // Hint: This documents that an array is rejected if its prototype is
+    // not itself a real array (via `Array.isArray`), even when that
+    // prototype is otherwise plain-object-shaped. Checking shape alone
+    // would accept any ordinary object substituted as an array's
+    // prototype, silently attaching its properties and methods (for
+    // example a hijacked `map`) to the array.
+    test('for array with an ordinary object as its prototype', () => {
+      const input: number[] = [1, 2, 3];
+      Object.setPrototypeOf(input, { map: () => 'hijacked' });
+      expectSchemaIssue(schema, baseIssue, [input]);
     });
 
     // Hint: This documents that a hostile prototype whose `getPrototypeOf`

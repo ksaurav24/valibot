@@ -103,15 +103,17 @@ function _isPlainObject(input: object): boolean {
  *
  * Hint: The caller already established `input` is a real array via
  * `Array.isArray`, which (unlike reading `input`'s prototype) cannot be
- * spoofed by a `Proxy`. So this only checks that its prototype is
- * `Array.prototype`-shaped: this realm's real `Array.prototype` (or,
- * cross-realm, an equivalent one) is itself plain-object-shaped one hop
- * up, the same way this realm's real `Object.prototype` is plain-shaped
- * for a plain object. An array whose prototype was explicitly set to
- * `null` is also accepted, matching how a plain object created with
- * `Object.create(null)` is accepted, even though such an array is a rare,
- * deliberate construction rather than something `JSON.parse` would ever
- * produce.
+ * spoofed by a `Proxy`. So this checks that its prototype is itself a real
+ * array too, via that same `Array.isArray` check (this realm's real
+ * `Array.prototype`, or a cross-realm equivalent, is itself an array
+ * exotic object, whereas an `Array` subclass's prototype, or an ordinary
+ * object substituted as the prototype, is not), and that it is otherwise
+ * plain-object-shaped one hop up, the same way this realm's real
+ * `Object.prototype` is plain-shaped for a plain object. An array whose
+ * prototype was explicitly set to `null` is also accepted, matching how a
+ * plain object created with `Object.create(null)` is accepted, even
+ * though such an array is a rare, deliberate construction rather than
+ * something `JSON.parse` would ever produce.
  *
  * Hint: Same limitation as `_isPlainObject`: a `Proxy` wrapping a real
  * `Array` subclass instance can still fake its own `getPrototypeOf` result
@@ -124,10 +126,30 @@ function _isPlainObject(input: object): boolean {
 function _isPlainArray(input: object): boolean {
   try {
     const proto: unknown = Object.getPrototypeOf(input);
-    return proto === null || _isPlainObject(proto as object);
+    return (
+      proto === null ||
+      (Array.isArray(proto) && _isPlainObject(proto as object))
+    );
   } catch {
     return false;
   }
+}
+
+/**
+ * Shallow-clones a list of issues, and copies each issue's `path` array,
+ * so the result is fully independent of the original: mutating one array
+ * (for example, an ancestor unshifting its own path item onto a `path`)
+ * never affects the other.
+ *
+ * @param issues The issues to clone.
+ *
+ * @returns The cloned issues.
+ */
+function _cloneJsonValueIssues(issues: JsonValueIssue[]): JsonValueIssue[] {
+  return issues.map((issue) => ({
+    ...issue,
+    path: issue.path && [...issue.path],
+  }));
 }
 
 /**
@@ -150,23 +172,36 @@ function _isPlainArray(input: object): boolean {
  * of its own ancestors forms a cycle and is rejected.
  *
  * Hint: `validated` tracks arrays and objects that were already found fully
- * valid (with no issues) via some other reference to them. A shared,
- * non-circular value referenced from many places (for example a diamond-
- * shaped or deeply reused object graph) would otherwise be re-walked once
- * per reference to it, which costs time exponential in the number of
- * references. A value only ever enters `validated` after it is removed
- * from `visiting` with zero issues collected, at which point it is
- * necessarily acyclic (any cycle through it would have been caught while
- * it was still on the active path) and fully valid, so accepting it again
- * without re-walking it cannot change the outcome, and does not affect the
- * issues or paths reported for any other, actually invalid occurrence of
- * the same value.
+ * valid (with no issues), and `invalid` tracks ones that were already found
+ * to have specific issues, via some other reference to them. A shared
+ * value referenced from many places (for example a diamond-shaped or
+ * deeply reused object graph) would otherwise be re-walked once per
+ * reference to it, which costs time exponential in the number of
+ * references, whether or not it turns out valid. A value only ever enters
+ * `validated` or `invalid` after it is removed from `visiting`, at which
+ * point it is necessarily acyclic (any cycle through it would have been
+ * caught while it was still on the active path) and its own issues (if
+ * any) are fully known, so reusing that outcome for another reference to
+ * it cannot change it. `invalid`'s cached issues are shallow-cloned, and
+ * their `path` arrays copied, both when stored and on every reuse, since
+ * each occurrence's own ancestors prepend their own path item to `path` by
+ * mutating it in place; without independent copies, path items from one
+ * occurrence's ancestry would leak into another's. `invalid` bounds the
+ * cost of re-validating a shared invalid value's own content (for example
+ * re-invoking a getter on one of its properties) to once, regardless of
+ * how many times it is referenced, but each reference still contributes
+ * its own, differently-pathed copy of its issues to the result, since that
+ * is the only accurate way to report where each reference actually is; so
+ * the total number of issues can still grow with the number of references
+ * to an invalid value, even though the work to discover them does not grow
+ * with the size of its own content.
  *
  * @param schema The JSON value schema.
  * @param dataset The input dataset.
  * @param config The configuration.
  * @param visiting The arrays and objects on the active recursion path.
  * @param validated The arrays and objects already found fully valid.
+ * @param invalid The arrays and objects already found invalid, and why.
  *
  * @returns The output dataset.
  */
@@ -175,7 +210,8 @@ function _runJsonValue(
   dataset: UnknownDataset,
   config: Config<JsonValueIssue>,
   visiting: WeakSet<object>,
-  validated: WeakSet<object>
+  validated: WeakSet<object>,
+  invalid: WeakMap<object, JsonValueIssue[]>
 ): OutputDataset<JsonValue, JsonValueIssue> {
   // Get input value from dataset
   const input = dataset.value;
@@ -198,6 +234,13 @@ function _runJsonValue(
     if (validated.has(input)) {
       // @ts-expect-error
       dataset.typed = true;
+
+      // If input was already found invalid via another reference to it,
+      // reuse those issues instead of re-walking it
+    } else if (invalid.has(input)) {
+      dataset.typed = false;
+      // @ts-expect-error
+      dataset.issues = _cloneJsonValueIssues(invalid.get(input)!);
 
       // If input references one of its own ancestors, add JSON value issue
     } else if (visiting.has(input)) {
@@ -233,7 +276,8 @@ function _runJsonValue(
             { value },
             config,
             visiting,
-            validated
+            validated,
+            invalid
           );
 
           // If there are issues, capture them
@@ -279,9 +323,11 @@ function _runJsonValue(
         // Input is no longer on the active recursion path
         visiting.delete(input);
 
-        // If no issues were collected, input and everything it contains is
-        // fully valid, so remember that for any other reference to it
-        if (!dataset.issues) {
+        // Remember the outcome for any other reference to input, so it is
+        // not re-walked
+        if (dataset.issues) {
+          invalid.set(input, _cloneJsonValueIssues(dataset.issues));
+        } else {
           validated.add(input);
         }
       }
@@ -318,7 +364,8 @@ function _runJsonValue(
             { value },
             config,
             visiting,
-            validated
+            validated,
+            invalid
           );
 
           // If there are issues, capture them
@@ -365,9 +412,11 @@ function _runJsonValue(
       // Input is no longer on the active recursion path
       visiting.delete(input);
 
-      // If no issues were collected, input and everything it contains is
-      // fully valid, so remember that for any other reference to it
-      if (!dataset.issues) {
+      // Remember the outcome for any other reference to input, so it is
+      // not re-walked
+      if (dataset.issues) {
+        invalid.set(input, _cloneJsonValueIssues(dataset.issues));
+      } else {
         validated.add(input);
       }
     }
@@ -405,9 +454,14 @@ function _runJsonValue(
  * `Proxy` can fake its own prototype, or a class's prototype chain can be
  * deliberately shortened to look plain. An object or array that
  * references itself, directly or through a nested value, is rejected with
- * an issue instead of being followed. Also note that very deeply nested
- * input can exceed the call stack, so untrusted input should have its
- * depth bounded before parsing.
+ * an issue instead of being followed. A value referenced from many places
+ * (for example a diamond-shaped or deeply reused object graph) is walked
+ * only once if it is valid, but reports one issue per distinct reference
+ * to it if it is invalid, since each reference has its own path from the
+ * root; so untrusted input should have both its depth and its overall
+ * structural branching bounded before parsing, as very deeply nested input
+ * can exceed the call stack, and an invalid value reachable by very many
+ * distinct paths can produce a correspondingly large number of issues.
  *
  * @returns A JSON value schema.
  */
@@ -436,7 +490,14 @@ export function jsonValue(
     async: false,
     message,
     '~run'(dataset, config) {
-      return _runJsonValue(this, dataset, config, new WeakSet(), new WeakSet());
+      return _runJsonValue(
+        this,
+        dataset,
+        config,
+        new WeakSet(),
+        new WeakSet(),
+        new WeakMap()
+      );
     },
   });
 }
