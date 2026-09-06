@@ -41,11 +41,14 @@ export interface JsonValueSchema<
  * `Object.prototype` reference despite being JSON-shaped and serializable.
  *
  * Hint: Rather than comparing `Object.getPrototypeOf(input)` against this
- * realm's `Object.prototype` by reference, this compares the source text of
- * the prototype's own `constructor` against `Object`'s. Native constructors
- * stringify to the same "[native code]" text in every realm, whereas a
- * custom class or built-in like `Date` or `Map` stringifies differently, so
- * only its own instances are excluded.
+ * realm's `Object.prototype` by reference, or reading the prototype's
+ * `constructor` property (which may be a throwing getter or a reassigned,
+ * spoofable value), this checks the shape of the prototype chain itself:
+ * every realm's `Object.prototype` has `null` as its own prototype, and no
+ * other built-in or class prototype does, since they all inherit from
+ * `Object.prototype` (directly or transitively). So `input` is a plain
+ * object if and only if its prototype is `null` (for example
+ * `Object.create(null)`) or its prototype's prototype is `null`.
  *
  * @param input The object to check.
  *
@@ -53,17 +56,7 @@ export interface JsonValueSchema<
  */
 function _isPlainObject(input: object): boolean {
   const proto: unknown = Object.getPrototypeOf(input);
-  if (proto === null) {
-    return true;
-  }
-  const ctor: unknown =
-    Object.prototype.hasOwnProperty.call(proto, 'constructor') &&
-    (proto as { constructor: unknown }).constructor;
-  return (
-    typeof ctor === 'function' &&
-    Function.prototype.toString.call(ctor) ===
-      Function.prototype.toString.call(Object)
-  );
+  return proto === null || Object.getPrototypeOf(proto) === null;
 }
 
 /**

@@ -134,13 +134,16 @@ describe('jsonValue', () => {
     test('for plain object from another realm', () => {
       const iframe = document.createElement('iframe');
       document.body.appendChild(iframe);
-      const otherWindow = iframe.contentWindow as unknown as typeof window;
-      const input = new otherWindow.Object() as Record<string, unknown>;
-      input.foo = 'bar';
-      const result = schema['~run']({ value: input }, {});
-      expect(result).toStrictEqual({ typed: true, value: input });
-      expect(result.value).toBe(input);
-      document.body.removeChild(iframe);
+      try {
+        const otherWindow = iframe.contentWindow as unknown as typeof window;
+        const input = new otherWindow.Object() as Record<string, unknown>;
+        input.foo = 'bar';
+        const result = schema['~run']({ value: input }, {});
+        expect(result).toStrictEqual({ typed: true, value: input });
+        expect(result.value).toBe(input);
+      } finally {
+        iframe.remove();
+      }
     });
   });
 
@@ -197,14 +200,29 @@ describe('jsonValue', () => {
       ]);
     });
 
+    // Hint: This documents that a custom class instance is rejected even if
+    // its prototype's `constructor` property is reassigned to `Object`, to
+    // impersonate a plain object. The check relies on the actual prototype
+    // chain shape, not on this mutable, spoofable property.
+    test('for object with spoofed constructor property', () => {
+      class Foo {
+        bar = 'baz';
+      }
+      Foo.prototype.constructor = Object;
+      expectSchemaIssue(schema, baseIssue, [new Foo()], 'Object');
+    });
+
     // Hint: This documents that the plain-object check also excludes a
     // non-plain object from another realm, not just from this one.
     test('for non-plain object from another realm', () => {
       const iframe = document.createElement('iframe');
       document.body.appendChild(iframe);
-      const otherWindow = iframe.contentWindow as unknown as typeof window;
-      expectSchemaIssue(schema, baseIssue, [new otherWindow.Date()]);
-      document.body.removeChild(iframe);
+      try {
+        const otherWindow = iframe.contentWindow as unknown as typeof window;
+        expectSchemaIssue(schema, baseIssue, [new otherWindow.Date()]);
+      } finally {
+        iframe.remove();
+      }
     });
   });
 
