@@ -83,50 +83,65 @@ describe('jsonValue', () => {
       ]);
     });
 
+    // Hint: This documents that jsonValue is validation-only: on success,
+    // the input is returned unchanged, so no key is ever excluded, even
+    // `__proto__`, `prototype`, and `constructor`.
+    test('does not rebuild or alter the input on success', () => {
+      const input = {
+        name: 'Alice',
+        tags: ['admin', 'user'],
+        address: { city: 'NYC', zip: '10001' },
+      };
+      const result = schema['~run']({ value: input }, {});
+      expect(result).toStrictEqual({ typed: true, value: input });
+      expect(result.value).toBe(input);
+      // @ts-expect-error `result.value` is narrowed to `JsonValue`
+      expect(result.value.address).toBe(input.address);
+      // @ts-expect-error `result.value` is narrowed to `JsonValue`
+      expect(result.value.tags).toBe(input.tags);
+    });
+
     test('for object with __proto__ key', () => {
       const input = JSON.parse('{"__proto__": 123, "foo": 456}');
-      expect(schema['~run']({ value: input }, {})).toStrictEqual({
-        typed: true,
-        value: { foo: 456 },
-      });
+      const result = schema['~run']({ value: input }, {});
+      expect(result).toStrictEqual({ typed: true, value: input });
+      expect(result.value).toBe(input);
     });
 
     test('for object with constructor and prototype keys', () => {
       const input = JSON.parse(
         '{"constructor":1,"prototype":2,"__proto__":3,"ok":4}'
       );
-      expect(schema['~run']({ value: input }, {})).toStrictEqual({
-        typed: true,
-        value: { ok: 4 },
-      });
+      const result = schema['~run']({ value: input }, {});
+      expect(result).toStrictEqual({ typed: true, value: input });
+      expect(result.value).toBe(input);
     });
 
     // Hint: This documents the intentional, precedent-based behavior of the
     // object branch (matches `record`): non-plain objects such as `Date`,
     // `Map`, and `Set` are not specially handled. Their own enumerable
     // properties are used, which for these built-ins means no own
-    // enumerable properties at all, so they are accepted as `{}`.
+    // enumerable properties at all, so they are accepted, and since jsonValue
+    // never copies the input, the original instance is returned as is.
     test('for Date object', () => {
-      expect(schema['~run']({ value: new Date() }, {})).toStrictEqual({
-        typed: true,
-        value: {},
-      });
+      const input = new Date();
+      const result = schema['~run']({ value: input }, {});
+      expect(result).toStrictEqual({ typed: true, value: input });
+      expect(result.value).toBe(input);
     });
 
     test('for Map object', () => {
-      expect(
-        schema['~run']({ value: new Map([['foo', 'bar']]) }, {})
-      ).toStrictEqual({
-        typed: true,
-        value: {},
-      });
+      const input = new Map([['foo', 'bar']]);
+      const result = schema['~run']({ value: input }, {});
+      expect(result).toStrictEqual({ typed: true, value: input });
+      expect(result.value).toBe(input);
     });
 
     test('for Set object', () => {
-      expect(schema['~run']({ value: new Set([1, 2, 3]) }, {})).toStrictEqual({
-        typed: true,
-        value: {},
-      });
+      const input = new Set([1, 2, 3]);
+      const result = schema['~run']({ value: input }, {});
+      expect(result).toStrictEqual({ typed: true, value: input });
+      expect(result.value).toBe(input);
     });
   });
 
@@ -206,9 +221,11 @@ describe('jsonValue', () => {
     test('for wrong value nested two levels deep in an object', () => {
       const address = { city: 'NYC', zip: undefined };
       const input = { name: 'Alice', address };
-      expect(schema['~run']({ value: input }, {})).toStrictEqual({
+      const result = schema['~run']({ value: input }, {});
+      expect(result.value).toBe(input);
+      expect(result).toStrictEqual({
         typed: false,
-        value: { name: 'Alice', address: { city: 'NYC', zip: undefined } },
+        value: input,
         issues: [
           {
             kind: 'schema',
@@ -246,11 +263,11 @@ describe('jsonValue', () => {
 
     test('with abort early', () => {
       const input = ['foo', undefined, 'bar', undefined];
-      expect(
-        schema['~run']({ value: input }, { abortEarly: true })
-      ).toStrictEqual({
+      const result = schema['~run']({ value: input }, { abortEarly: true });
+      expect(result.value).toBe(input);
+      expect(result).toStrictEqual({
         typed: false,
-        value: ['foo'],
+        value: input,
         issues: [
           {
             kind: 'schema',
@@ -329,11 +346,11 @@ describe('jsonValue', () => {
 
     test('with abort early for an object', () => {
       const input = { a: undefined, b: undefined };
-      expect(
-        schema['~run']({ value: input }, { abortEarly: true })
-      ).toStrictEqual({
+      const result = schema['~run']({ value: input }, { abortEarly: true });
+      expect(result.value).toBe(input);
+      expect(result).toStrictEqual({
         typed: false,
-        value: {},
+        value: input,
         issues: [
           {
             kind: 'schema',
@@ -380,9 +397,11 @@ describe('jsonValue', () => {
         abortEarly: undefined,
         abortPipeEarly: undefined,
       } as const;
-      expect(schema['~run']({ value: input }, {})).toStrictEqual({
+      const result = schema['~run']({ value: input }, {});
+      expect(result.value).toBe(input);
+      expect(result).toStrictEqual({
         typed: false,
-        value: { list, meta },
+        value: input,
         issues: [
           {
             ...undefinedIssue,

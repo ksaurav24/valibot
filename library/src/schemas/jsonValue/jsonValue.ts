@@ -7,11 +7,7 @@ import type {
   OutputDataset,
   UnknownDataset,
 } from '../../types/index.ts';
-import {
-  _addIssue,
-  _isValidObjectKey,
-  _standardSchema,
-} from '../../utils/index.ts';
+import { _addIssue, _standardSchema } from '../../utils/index.ts';
 import type { JsonValue, JsonValueIssue } from './types.ts';
 
 /**
@@ -41,6 +37,14 @@ export interface JsonValueSchema<
 /**
  * Runs the JSON value schema against a dataset, recursing into nested
  * arrays and objects.
+ *
+ * Hint: This function only validates; it never creates a new array or
+ * object or writes to `dataset.value`. On success (and even on failure),
+ * `dataset.value` stays exactly the reference it started as, so no key is
+ * ever excluded and no data is changed. Each array/object is only walked
+ * for its own enumerable properties, so `__proto__`, `prototype`, and
+ * `constructor` are validated like any other key when they occur as an
+ * own property.
  *
  * Hint: `visiting` tracks the arrays and objects currently on the active
  * recursion path (not every value seen), so a value that occurs more than
@@ -85,12 +89,12 @@ function _runJsonValue(
       // Track input as being visited for the duration of this recursion
       visiting.add(input);
 
-      // Set typed to `true` and value to empty array
       // @ts-expect-error
       dataset.typed = true;
-      dataset.value = [];
 
-      // Parse each array item by recursing into this same schema
+      // Check each array item recursively by reusing this same schema
+      // Hint: `dataset.value` is left untouched, so the input array itself
+      // is returned as is, unmodified
       for (let key = 0; key < input.length; key++) {
         const value: unknown = input[key];
         const itemDataset = _runJsonValue(schema, { value }, config, visiting);
@@ -133,10 +137,6 @@ function _runJsonValue(
         if (!itemDataset.typed) {
           dataset.typed = false;
         }
-
-        // Add item to dataset
-        // @ts-expect-error
-        dataset.value.push(itemDataset.value);
       }
 
       // Input is no longer on the active recursion path
@@ -147,16 +147,18 @@ function _runJsonValue(
       // Track input as being visited for the duration of this recursion
       visiting.add(input);
 
-      // Set typed to `true` and value to empty object
       // @ts-expect-error
       dataset.typed = true;
-      dataset.value = {};
 
-      // Parse each object entry by recursing into this same schema
+      // Check each object entry recursively by reusing this same schema
       // Hint: for...in loop always returns keys as strings
-      // Hint: We exclude specific keys for security reasons
+      // Hint: We only check the input's own enumerable properties, the
+      // same way `JSON.stringify` ignores inherited ones
+      // Hint: `dataset.value` is left untouched, so the input object itself
+      // is returned as is, unmodified, and no key (including `__proto__`,
+      // `prototype`, and `constructor`) is ever excluded
       for (const key in input) {
-        if (_isValidObjectKey(input, key)) {
+        if (Object.prototype.hasOwnProperty.call(input, key)) {
           const value: unknown = input[key as keyof typeof input];
           const entryDataset = _runJsonValue(
             schema,
@@ -203,10 +205,6 @@ function _runJsonValue(
           if (!entryDataset.typed) {
             dataset.typed = false;
           }
-
-          // Add entry to dataset
-          // @ts-expect-error
-          dataset.value[key] = entryDataset.value;
         }
       }
 
@@ -228,17 +226,22 @@ function _runJsonValue(
  * Creates a JSON value schema.
  *
  * Hint: This schema matches strings, finite numbers, booleans, `null`, and
- * objects or arrays that recursively contain only these types. Values with
- * custom `toJSON` behavior (for example `Date`) are not specially handled;
- * their own enumerable properties are used instead, the same way the
- * `record` schema treats them (unlike `object`, which reads off the keys
- * declared in its entries rather than the input's own keys), and
- * `__proto__`, `prototype`, and `constructor` keys are always excluded from
- * objects for security reasons. An object or array that references itself,
- * directly or through a nested value, is rejected with an issue instead of
- * being followed. Also note that very deeply nested input can exceed the
- * call stack, so untrusted input should have its depth bounded before
- * parsing.
+ * objects or arrays that recursively contain only these types. It is
+ * validation-only: on success, the input is returned unchanged rather than
+ * copied into a new array or object, so `__proto__`, `prototype`, and
+ * `constructor` are treated like any other key when they occur as an
+ * object's own property, and no data is silently dropped or altered.
+ * Because the input is not copied, mutating the returned value also
+ * mutates the original input value. Values with custom `toJSON` behavior
+ * (for example `Date`) are not specially handled; their own enumerable
+ * properties are used instead, the same way the `record` schema treats
+ * them (unlike `object`, which reads off the keys declared in its entries
+ * rather than the input's own keys), so such a value that passes
+ * validation is returned as the original instance rather than a plain
+ * object. An object or array that references itself, directly or through a
+ * nested value, is rejected with an issue instead of being followed. Also
+ * note that very deeply nested input can exceed the call stack, so
+ * untrusted input should have its depth bounded before parsing.
  *
  * @returns A JSON value schema.
  */
