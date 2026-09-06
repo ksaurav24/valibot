@@ -41,9 +41,9 @@ export interface JsonValueSchema<
  * Hint: This function only validates; it never creates a new array or
  * object or writes to `dataset.value`. On success (and even on failure),
  * `dataset.value` stays exactly the reference it started as, so no key is
- * ever excluded and no data is changed. Each array/object is only walked
- * for its own enumerable properties, so `__proto__`, `prototype`, and
- * `constructor` are validated like any other key when they occur as an
+ * ever excluded and no data is changed. Arrays are checked at every index up to
+ * their length; objects are checked only for own enumerable properties, so
+ * `__proto__`, `prototype`, and `constructor` are validated like any other key when they occur as an
  * own property.
  *
  * Hint: `visiting` tracks the arrays and objects currently on the active
