@@ -35,6 +35,38 @@ export interface JsonValueSchema<
 }
 
 /**
+ * Checks whether an object is a plain object, in a way that also accepts a
+ * plain object created in another JavaScript realm (for example another
+ * `vm` context or iframe), since such an object has a different
+ * `Object.prototype` reference despite being JSON-shaped and serializable.
+ *
+ * Hint: Rather than comparing `Object.getPrototypeOf(input)` against this
+ * realm's `Object.prototype` by reference, this compares the source text of
+ * the prototype's own `constructor` against `Object`'s. Native constructors
+ * stringify to the same "[native code]" text in every realm, whereas a
+ * custom class or built-in like `Date` or `Map` stringifies differently, so
+ * only its own instances are excluded.
+ *
+ * @param input The object to check.
+ *
+ * @returns Whether the object is a plain object.
+ */
+function _isPlainObject(input: object): boolean {
+  const proto: unknown = Object.getPrototypeOf(input);
+  if (proto === null) {
+    return true;
+  }
+  const ctor: unknown =
+    Object.prototype.hasOwnProperty.call(proto, 'constructor') &&
+    (proto as { constructor: unknown }).constructor;
+  return (
+    typeof ctor === 'function' &&
+    Function.prototype.toString.call(ctor) ===
+      Function.prototype.toString.call(Object)
+  );
+}
+
+/**
  * Runs the JSON value schema against a dataset, recursing into nested
  * arrays and objects.
  *
@@ -150,10 +182,7 @@ function _runJsonValue(
       // `Date` or `Map`) were accepted here, it would be returned as is
       // and typed as `JsonValue`, even though it is not actually a plain
       // JSON-shaped value.
-    } else if (
-      Object.getPrototypeOf(input) !== Object.prototype &&
-      Object.getPrototypeOf(input) !== null
-    ) {
+    } else if (!_isPlainObject(input)) {
       _addIssue(schema, 'type', dataset, config);
 
       // Otherwise, input is a plain object, so check each entry recursively
@@ -246,12 +275,13 @@ function _runJsonValue(
  * `constructor` are treated like any other key when they occur as an
  * object's own property, and no data is silently dropped or altered.
  * Because the input is not copied, mutating the returned value also
- * mutates the original input value. An object is only accepted if its
- * prototype is `Object.prototype` or `null`; instances of other classes
- * (for example `Date`, `Map`, or a custom class), including ones with no
- * own enumerable properties, are rejected with an issue, since the input
- * is never copied and so could otherwise be returned as a live instance
- * typed as `JsonValue`. An object or array that references itself,
+ * mutates the original input value. An object is only accepted if it is a
+ * plain object (including one created in another JavaScript realm, such as
+ * a `vm` context or iframe); instances of other classes (for example
+ * `Date`, `Map`, or a custom class), including ones with no own enumerable
+ * properties, are rejected with an issue, since the input is never copied
+ * and so could otherwise be returned as a live instance typed as
+ * `JsonValue`. An object or array that references itself,
  * directly or through a nested value, is rejected with an issue instead of
  * being followed. Also note that very deeply nested input can exceed the
  * call stack, so untrusted input should have its depth bounded before

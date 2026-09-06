@@ -126,6 +126,22 @@ describe('jsonValue', () => {
       expect(result).toStrictEqual({ typed: true, value: input });
       expect(result.value).toBe(input);
     });
+
+    // Hint: This documents that a plain object created in another realm
+    // (for example another `vm` context or, as simulated here, an iframe's
+    // `contentWindow`) is still accepted, even though its prototype is not
+    // `===` to this realm's `Object.prototype`.
+    test('for plain object from another realm', () => {
+      const iframe = document.createElement('iframe');
+      document.body.appendChild(iframe);
+      const otherWindow = iframe.contentWindow as unknown as typeof window;
+      const input = new otherWindow.Object() as Record<string, unknown>;
+      input.foo = 'bar';
+      const result = schema['~run']({ value: input }, {});
+      expect(result).toStrictEqual({ typed: true, value: input });
+      expect(result.value).toBe(input);
+      document.body.removeChild(iframe);
+    });
   });
 
   describe('should return dataset with issues', () => {
@@ -179,6 +195,16 @@ describe('jsonValue', () => {
         new Set([1, 2, 3]),
         new Foo(),
       ]);
+    });
+
+    // Hint: This documents that the plain-object check also excludes a
+    // non-plain object from another realm, not just from this one.
+    test('for non-plain object from another realm', () => {
+      const iframe = document.createElement('iframe');
+      document.body.appendChild(iframe);
+      const otherWindow = iframe.contentWindow as unknown as typeof window;
+      expectSchemaIssue(schema, baseIssue, [new otherWindow.Date()]);
+      document.body.removeChild(iframe);
     });
   });
 
