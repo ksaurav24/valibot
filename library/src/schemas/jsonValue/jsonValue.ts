@@ -41,10 +41,12 @@ export interface JsonValueSchema<
  * Hint: This function only validates; it never creates a new array or
  * object or writes to `dataset.value`. On success (and even on failure),
  * `dataset.value` stays exactly the reference it started as, so no key is
- * ever excluded and no data is changed. Arrays are checked at every index up to
- * their length; objects are checked only for own enumerable properties, so
- * `__proto__`, `prototype`, and `constructor` are validated like any other key when they occur as an
- * own property.
+ * ever excluded and no data is changed. Arrays are walked by index from `0`
+ * up to `length - 1` (stopping early if `config.abortEarly` is `true` and
+ * an item is invalid), so an inherited or sparse index is read just like
+ * any other index. Objects are only walked for their own enumerable
+ * properties, so `__proto__`, `prototype`, and `constructor` are validated
+ * like any other key when they occur as an own property.
  *
  * Hint: `visiting` tracks the arrays and objects currently on the active
  * recursion path (not every value seen), so a value that occurs more than
@@ -142,7 +144,19 @@ function _runJsonValue(
       // Input is no longer on the active recursion path
       visiting.delete(input);
 
-      // Otherwise, input is an object, so check each entry recursively
+      // If input is not a plain object, add JSON value issue
+      // Hint: Unlike `record`, this schema never copies the input into a
+      // new plain object. If an instance of another class (for example
+      // `Date` or `Map`) were accepted here, it would be returned as is
+      // and typed as `JsonValue`, even though it is not actually a plain
+      // JSON-shaped value.
+    } else if (
+      Object.getPrototypeOf(input) !== Object.prototype &&
+      Object.getPrototypeOf(input) !== null
+    ) {
+      _addIssue(schema, 'type', dataset, config);
+
+      // Otherwise, input is a plain object, so check each entry recursively
     } else {
       // Track input as being visited for the duration of this recursion
       visiting.add(input);
@@ -226,22 +240,22 @@ function _runJsonValue(
  * Creates a JSON value schema.
  *
  * Hint: This schema matches strings, finite numbers, booleans, `null`, and
- * objects or arrays that recursively contain only these types. It is
+ * plain objects or arrays that recursively contain only these types. It is
  * validation-only: on success, the input is returned unchanged rather than
  * copied into a new array or object, so `__proto__`, `prototype`, and
  * `constructor` are treated like any other key when they occur as an
  * object's own property, and no data is silently dropped or altered.
  * Because the input is not copied, mutating the returned value also
- * mutates the original input value. Values with custom `toJSON` behavior
- * (for example `Date`) are not specially handled; their own enumerable
- * properties are used instead, the same way the `record` schema treats
- * them (unlike `object`, which reads off the keys declared in its entries
- * rather than the input's own keys), so such a value that passes
- * validation is returned as the original instance rather than a plain
- * object. An object or array that references itself, directly or through a
- * nested value, is rejected with an issue instead of being followed. Also
- * note that very deeply nested input can exceed the call stack, so
- * untrusted input should have its depth bounded before parsing.
+ * mutates the original input value. An object is only accepted if its
+ * prototype is `Object.prototype` or `null`; instances of other classes
+ * (for example `Date`, `Map`, or a custom class), including ones with no
+ * own enumerable properties, are rejected with an issue, since the input
+ * is never copied and so could otherwise be returned as a live instance
+ * typed as `JsonValue`. An object or array that references itself,
+ * directly or through a nested value, is rejected with an issue instead of
+ * being followed. Also note that very deeply nested input can exceed the
+ * call stack, so untrusted input should have its depth bounded before
+ * parsing.
  *
  * @returns A JSON value schema.
  */

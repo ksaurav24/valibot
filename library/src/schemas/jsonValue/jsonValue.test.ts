@@ -117,28 +117,11 @@ describe('jsonValue', () => {
       expect(result.value).toBe(input);
     });
 
-    // Hint: This documents the intentional, precedent-based behavior of the
-    // object branch (matches `record`): non-plain objects such as `Date`,
-    // `Map`, and `Set` are not specially handled. Their own enumerable
-    // properties are used, which for these built-ins means no own
-    // enumerable properties at all, so they are accepted, and since jsonValue
-    // never copies the input, the original instance is returned as is.
-    test('for Date object', () => {
-      const input = new Date();
-      const result = schema['~run']({ value: input }, {});
-      expect(result).toStrictEqual({ typed: true, value: input });
-      expect(result.value).toBe(input);
-    });
-
-    test('for Map object', () => {
-      const input = new Map([['foo', 'bar']]);
-      const result = schema['~run']({ value: input }, {});
-      expect(result).toStrictEqual({ typed: true, value: input });
-      expect(result.value).toBe(input);
-    });
-
-    test('for Set object', () => {
-      const input = new Set([1, 2, 3]);
+    // Hint: This documents that a null-prototype object is treated as a
+    // plain object, since it cannot be an instance of `Date`, `Map`, or any
+    // other class.
+    test('for object with null prototype', () => {
+      const input = Object.assign(Object.create(null), { foo: 'bar' });
       const result = schema['~run']({ value: input }, {});
       expect(result).toStrictEqual({ typed: true, value: input });
       expect(result.value).toBe(input);
@@ -179,6 +162,23 @@ describe('jsonValue', () => {
 
     test('for NaN and Infinity', () => {
       expectSchemaIssue(schema, baseIssue, [NaN, Infinity, -Infinity]);
+    });
+
+    // Hint: Unlike `record`, this schema never copies the input into a new
+    // plain object, so accepting a non-plain object would return it as is,
+    // typed as `JsonValue`, even though it is really a live instance of
+    // another class. It is rejected instead, even when it has no own
+    // enumerable properties.
+    test('for non-plain objects', () => {
+      class Foo {
+        bar = 'baz';
+      }
+      expectSchemaIssue(schema, baseIssue, [
+        new Date(),
+        new Map([['foo', 'bar']]),
+        new Set([1, 2, 3]),
+        new Foo(),
+      ]);
     });
   });
 
