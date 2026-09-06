@@ -10,7 +10,7 @@ import type {
   ObjectPathItem,
   OutputDataset,
 } from '../../types/index.ts';
-import { _addIssue, _getStandardProps } from '../../utils/index.ts';
+import { _addIssue, _standardSchema } from '../../utils/index.ts';
 import type { StrictObjectIssue } from './types.ts';
 
 /**
@@ -78,7 +78,7 @@ export function strictObject(
   ObjectEntries,
   ErrorMessage<StrictObjectIssue> | undefined
 > {
-  return {
+  return _standardSchema({
     kind: 'schema',
     type: 'strict_object',
     reference: strictObject,
@@ -86,9 +86,6 @@ export function strictObject(
     async: false,
     entries,
     message,
-    get '~standard'() {
-      return _getStandardProps(this);
-    },
     '~run'(dataset, config) {
       // Get input value from dataset
       const input = dataset.value;
@@ -239,5 +236,5 @@ export function strictObject(
         StrictObjectIssue | InferObjectIssue<ObjectEntries>
       >;
     },
-  };
+  });
 }
