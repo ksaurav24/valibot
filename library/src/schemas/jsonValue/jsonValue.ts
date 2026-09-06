@@ -142,7 +142,7 @@ function _runJsonValue(
       // Input is no longer on the active recursion path
       visiting.delete(input);
 
-      // Otherwise, input is a plain object, so check each entry recursively
+      // Otherwise, input is an object, so check each entry recursively
     } else {
       // Track input as being visited for the duration of this recursion
       visiting.add(input);

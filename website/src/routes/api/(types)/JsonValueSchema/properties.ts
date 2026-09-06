@@ -56,7 +56,7 @@ export const properties: Record<string, PropertyProps> = {
   reference: {
     type: {
       type: 'custom',
-      modifier: 'readonly',
+      modifier: 'typeof',
       name: 'jsonValue',
       href: '../jsonValue/',
     },

@@ -15,3 +15,5 @@ JSON value type.
 ## Definition
 
 - `JsonValue` <Property {...properties.JsonValue} />
+
+> Since TypeScript has no finite-number type, `NaN`, `Infinity`, and `-Infinity` type-check as `JsonValue` even though the [`jsonValue`](/api/jsonValue/) schema rejects them at runtime.
