@@ -1,8 +1,11 @@
 import { describe, expect, test } from 'vitest';
 import type { FailureDataset, InferIssue } from '../../types/index.ts';
 import { expectNoSchemaIssue, expectSchemaIssue } from '../../vitest/index.ts';
-import { jsonValue, type JsonValueSchema } from './jsonValue.ts';
-import type { JsonValueIssue } from './types.ts';
+import {
+  jsonValue,
+  type JsonValueIssue,
+  type JsonValueSchema,
+} from './jsonValue.ts';
 
 describe('jsonValue', () => {
   describe('should return schema object', () => {
