@@ -14,7 +14,10 @@ import type {
 } from '../../jsonValue.ts';
 import { _cloneJsonValueIssues } from '../_cloneJsonValueIssues/index.ts';
 import { _isPlainArray } from '../_isPlainArray/index.ts';
-import { _isPlainObject } from '../_isPlainObject/index.ts';
+import {
+  _isConstructorPrototype,
+  _isPlainObject,
+} from '../_isPlainObject/index.ts';
 
 /**
  * Runs the JSON value schema against a dataset, recursing into nested
@@ -205,7 +208,16 @@ export function _runJsonValue(
       // `Date` or `Map`) were accepted here, it would be returned as is
       // and typed as `JsonValue`, even though it is not actually a plain
       // JSON-shaped value.
-    } else if (!_isPlainObject(input)) {
+      // Hint: `_isPlainObject` alone cannot tell a plain object apart from
+      // a constructor's own `.prototype` object (for example
+      // `Date.prototype`), since it sits at the same one-hop depth above
+      // `Object.prototype`. `_isConstructorPrototype` catches that case;
+      // it is checked here, on the actual input, rather than inside
+      // `_isPlainObject` itself, since `_isPlainArray` also reuses
+      // `_isPlainObject` to check an array's own prototype (real
+      // `Array.prototype`, which is itself such a constructor prototype
+      // and must keep passing that unrelated check).
+    } else if (!_isPlainObject(input) || _isConstructorPrototype(input)) {
       _addIssue(schema, 'type', dataset, config);
 
       // Otherwise, input is a plain object, so check each entry recursively
@@ -220,6 +232,11 @@ export function _runJsonValue(
       // Hint: for...in loop always returns keys as strings
       // Hint: We only check the input's own enumerable properties, the
       // same way `JSON.stringify` ignores inherited ones
+      // Hint: A `toJSON` method is never invoked here, unlike
+      // `JSON.stringify`. An enumerable own `toJSON` is walked and rejected
+      // like any other function-valued property; a non-enumerable own or
+      // inherited `toJSON` is silently skipped, so the accepted shape can
+      // differ from what `JSON.stringify` would actually produce
       // Hint: `dataset.value` is left untouched, so the input object itself
       // is returned as is, unmodified, and no key (including `__proto__`,
       // `prototype`, and `constructor`) is ever excluded

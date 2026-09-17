@@ -241,6 +241,50 @@ describe('jsonValue', () => {
       ]);
     });
 
+    // Hint: A constructor's own `.prototype` object (for example
+    // `Date.prototype`) sits at the same one-hop depth above
+    // `Object.prototype` as an ordinary plain object, and typically has no
+    // own enumerable properties either, so the prototype-chain-shape check
+    // alone cannot tell it apart from a genuine plain object. Without the
+    // additional `_isConstructorPrototype` check, this schema would accept
+    // such a live, shared prototype object as is and type it as
+    // `JsonValue`.
+    // Hint: This asserts on individual fields rather than with
+    // `expectSchemaIssue`'s `toStrictEqual`, since deep-equality matchers
+    // call built-in methods like `Map.prototype.size` on the compared
+    // value, which throw when the value is a bare prototype object rather
+    // than a real instance, unrelated to the schema's own behavior.
+    test('for constructor prototype objects', () => {
+      class Foo {
+        bar(): void {
+          // empty on purpose
+        }
+      }
+      for (const value of [
+        Object.prototype,
+        Date.prototype,
+        Map.prototype,
+        Foo.prototype,
+      ]) {
+        const result = schema['~run']({ value }, {});
+        expect(result.typed).toBe(false);
+        expect(result.issues).toHaveLength(1);
+        expect(result.issues?.[0].type).toBe('jsonValue');
+        expect(result.issues?.[0].input).toBe(value);
+      }
+    });
+
+    // Hint: This guards against a regression where rejecting constructor
+    // prototype objects (see the test above) would also reject ordinary
+    // arrays. `_isPlainArray` reuses `_isPlainObject` to confirm that a
+    // real array's own prototype (`Array.prototype`, itself a constructor
+    // prototype object) is plain-shaped one hop further up, so that reuse
+    // must keep working even though a constructor prototype object is
+    // rejected when it is the input being validated directly.
+    test('for ordinary arrays, despite Array.prototype being a constructor prototype object', () => {
+      expectNoSchemaIssue(schema, [[], [1, 'two', false, null]]);
+    });
+
     // Hint: This documents that a custom class instance is rejected even if
     // its prototype's `constructor` property is reassigned to `Object`, to
     // impersonate a plain object. The check relies on the actual prototype

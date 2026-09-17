@@ -71,7 +71,15 @@ export interface JsonValueSchema<
  * Creates a JSON value schema.
  *
  * Hint: This schema matches strings, finite numbers, booleans, `null`, and
- * plain objects or arrays that recursively contain only these types. It is
+ * plain objects or arrays that recursively contain only these types. It
+ * checks this structural shape directly rather than testing whether the
+ * input is JSON-serializable; in particular, a `toJSON` method is never
+ * invoked. An enumerable own `toJSON` is checked as an ordinary property
+ * value and rejected, since a function is not a JSON value, while a
+ * non-enumerable own `toJSON`, or one inherited from a plain-shaped
+ * prototype, is skipped entirely, just like any other non-enumerable or
+ * inherited property. Either way, this schema's outcome can differ from
+ * what `JSON.stringify` would actually produce for the same input. It is
  * validation-only: on success, the input is returned unchanged rather than
  * copied into a new array or object, so `__proto__`, `prototype`, and
  * `constructor` are treated like any other key when they occur as an

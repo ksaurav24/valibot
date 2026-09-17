@@ -47,6 +47,18 @@ function _isPlainPrototype(proto: object | null): boolean {
  * check only guards against ordinary, non-adversarial inputs, such as a
  * `Date` or class instance passed in by mistake.
  *
+ * Hint: This chain-shape check alone cannot tell a genuine plain object
+ * apart from a constructor's own `.prototype` object (for example
+ * `Date.prototype`), since such an object sits at the same one-hop depth
+ * above `Object.prototype`. `_isPlainArray` relies on that here: it reuses
+ * this function to confirm that an ordinary array's own prototype (real
+ * `Array.prototype`, which is itself such a constructor prototype) is
+ * "plain enough" one hop further up, so this function must keep accepting
+ * `Array.prototype` and similar built-in prototypes. Callers that check an
+ * actual input value, rather than a prototype one hop above it, should
+ * additionally reject a `.prototype` object with `_isConstructorPrototype`;
+ * see `_runJsonValue`.
+ *
  * @param input The object to check.
  *
  * @returns Whether the object is a plain object.
@@ -59,5 +71,53 @@ export function _isPlainObject(input: object): boolean {
     return _isPlainPrototype(Object.getPrototypeOf(input) as object | null);
   } catch {
     return false;
+  }
+}
+
+/**
+ * Checks whether an object is itself some constructor's own `.prototype`
+ * object, for example `Date.prototype`, `Map.prototype`, or `Foo.prototype`
+ * for a plain class `Foo`.
+ *
+ * Hint: Such an object passes `_isPlainObject` (see its hint above), since
+ * it sits exactly one hop above `Object.prototype`, the same depth as an
+ * ordinary plain object, and typically has no own enumerable properties
+ * either (methods on a prototype are non-enumerable by default). Reading
+ * `input`'s own `constructor` property and comparing its `prototype` back
+ * to `input` catches it instead: a `.prototype` object has an own,
+ * non-enumerable `constructor` that points back to it, while an ordinary
+ * object literal has no own `constructor` at all (it only inherits one),
+ * so this only flags true `.prototype` objects, not ordinary values that
+ * happen to have their own `constructor` data property (which `jsonValue`
+ * otherwise treats like any other key).
+ *
+ * Hint: `constructor` is read defensively here (it may be a throwing
+ * getter, or reassigned to a spoofable value), but unlike `_isPlainObject`,
+ * any failure to read it is treated as "this might be a prototype object"
+ * and rejected, not as "this is plain", since callers only run this check
+ * on values that already passed the more permissive `_isPlainObject`.
+ *
+ * Hint: This intentionally only checks `input` itself, never a prototype
+ * one hop above some other value, so it is safe to apply to an actual
+ * input value (see `_runJsonValue`) without affecting `_isPlainArray`'s
+ * unrelated reuse of `_isPlainObject` to check an array's own prototype.
+ *
+ * @param input The object to check.
+ *
+ * @returns Whether the object is a constructor's own prototype object.
+ *
+ * @internal
+ */
+// @__NO_SIDE_EFFECTS__
+export function _isConstructorPrototype(input: object): boolean {
+  try {
+    const constructor: unknown = (input as { constructor?: unknown })
+      .constructor;
+    return (
+      typeof constructor === 'function' &&
+      (constructor as { prototype?: unknown }).prototype === input
+    );
+  } catch {
+    return true;
   }
 }
