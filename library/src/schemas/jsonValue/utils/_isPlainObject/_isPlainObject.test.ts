@@ -33,6 +33,18 @@ describe('_isPlainObject', () => {
     expect(_isPlainObject(Array.prototype)).toBe(true);
     expect(_isPlainObject(Date.prototype)).toBe(true);
   });
+
+  test('should return false if input itself has a throwing getPrototypeOf trap', () => {
+    const input = new Proxy(
+      {},
+      {
+        getPrototypeOf() {
+          throw new Error('boom');
+        },
+      }
+    );
+    expect(_isPlainObject(input)).toBe(false);
+  });
 });
 
 describe('_isConstructorPrototype', () => {
@@ -72,15 +84,27 @@ describe('_isConstructorPrototype', () => {
     expect(_isConstructorPrototype(new Foo())).toBe(false);
   });
 
-  test('should return true if reading constructor throws', () => {
+  test('should return true if reading the constructor descriptor throws', () => {
     const input = new Proxy(
       {},
       {
-        get() {
+        getOwnPropertyDescriptor() {
           throw new Error('boom');
         },
       }
     );
     expect(_isConstructorPrototype(input)).toBe(true);
+  });
+
+  test('should return false for a plain object with a throwing non-enumerable constructor getter', () => {
+    const input: object = {};
+    Object.defineProperty(input, 'constructor', {
+      enumerable: false,
+      configurable: true,
+      get() {
+        throw new Error('boom');
+      },
+    });
+    expect(_isConstructorPrototype(input)).toBe(false);
   });
 });

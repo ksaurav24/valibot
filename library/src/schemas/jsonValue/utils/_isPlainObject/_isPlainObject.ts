@@ -91,11 +91,16 @@ export function _isPlainObject(input: object): boolean {
  * happen to have their own `constructor` data property (which `jsonValue`
  * otherwise treats like any other key).
  *
- * Hint: `constructor` is read defensively here (it may be a throwing
- * getter, or reassigned to a spoofable value), but unlike `_isPlainObject`,
- * any failure to read it is treated as "this might be a prototype object"
- * and rejected, not as "this is plain", since callers only run this check
- * on values that already passed the more permissive `_isPlainObject`.
+ * Hint: `constructor` is read via its own property descriptor, never
+ * through a plain property access, so a non-enumerable own `constructor`
+ * accessor cannot be invoked (and cannot throw) just by checking an
+ * ordinary plain object; a real `.prototype` object's own `constructor` is
+ * always a plain data property, never an accessor, so this cannot miss a
+ * genuine one. Reading the descriptor itself (for example on a hostile
+ * `Proxy`) may still throw; unlike `_isPlainObject`, any such failure is
+ * treated as "this might be a prototype object" and rejected, not as "this
+ * is plain", since callers only run this check on values that already
+ * passed the more permissive `_isPlainObject`.
  *
  * Hint: This intentionally only checks `input` itself, never a prototype
  * one hop above some other value, so it is safe to apply to an actual
@@ -111,8 +116,9 @@ export function _isPlainObject(input: object): boolean {
 // @__NO_SIDE_EFFECTS__
 export function _isConstructorPrototype(input: object): boolean {
   try {
-    const constructor: unknown = (input as { constructor?: unknown })
-      .constructor;
+    const descriptor = Object.getOwnPropertyDescriptor(input, 'constructor');
+    const constructor: unknown =
+      descriptor && 'value' in descriptor ? descriptor.value : undefined;
     return (
       typeof constructor === 'function' &&
       (constructor as { prototype?: unknown }).prototype === input

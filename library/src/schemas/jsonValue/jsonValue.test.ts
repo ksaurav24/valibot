@@ -94,6 +94,29 @@ describe('jsonValue', () => {
       expect(result.value).toBe(input);
     });
 
+    // Hint: This documents that a non-enumerable property is never read in
+    // a way that could invoke a hostile accessor, not even to check whether
+    // the object is a constructor's own `.prototype` object; only the
+    // object's shape (its prototype chain) determines that.
+    // Hint: This asserts on individual fields rather than with
+    // `toStrictEqual`, since deep-equality matchers read every own
+    // property of the compared value, including non-enumerable ones, and
+    // would trigger the same throwing getter themselves.
+    test('for object with a throwing non-enumerable constructor getter', () => {
+      const input: Record<string, unknown> = { foo: 'bar' };
+      Object.defineProperty(input, 'constructor', {
+        enumerable: false,
+        configurable: true,
+        get() {
+          throw new Error('should not be called');
+        },
+      });
+      const result = schema['~run']({ value: input }, {});
+      expect(result.typed).toBe(true);
+      expect(result.issues).toBeUndefined();
+      expect(result.value).toBe(input);
+    });
+
     test('for deeply nested structures', () => {
       expectNoSchemaIssue(schema, [
         {
