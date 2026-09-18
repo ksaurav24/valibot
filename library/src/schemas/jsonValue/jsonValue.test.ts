@@ -668,6 +668,71 @@ describe('jsonValue', () => {
       const result = customSchema['~run']({ value: input }, {});
       expect(result.issues?.[0].message).toBe('custom message');
     });
+
+    // Hint: This documents that a hostile accessor throwing while its own
+    // property is read is treated as an invalid entry, not as a reason to
+    // let the exception escape `~run` and abort validation of the whole
+    // input, the same way a throwing `getPrototypeOf` trap is treated as a
+    // validation issue rather than a crash.
+    // Hint: This asserts on individual fields rather than with
+    // `toStrictEqual`, since deep-equality matchers read every own
+    // property of the compared value, including `input`, and would trigger
+    // the same throwing getter themselves.
+    test('for object with a throwing enumerable property getter', () => {
+      const input: Record<string, unknown> = { foo: 'bar' };
+      Object.defineProperty(input, 'constructor', {
+        enumerable: true,
+        configurable: true,
+        get() {
+          throw new Error('should be caught, not escape ~run');
+        },
+      });
+      let result: FailureDataset<InferIssue<typeof schema>> | undefined;
+      expect(() => {
+        result = schema['~run']({ value: input }, {}) as FailureDataset<
+          InferIssue<typeof schema>
+        >;
+      }).not.toThrow();
+      expect(result?.typed).toBe(false);
+      expect(result?.issues).toHaveLength(1);
+      expect(result?.issues?.[0].received).toBe('an unreadable value');
+      expect(result?.issues?.[0].path).toHaveLength(1);
+      const pathItem = result?.issues?.[0].path?.[0];
+      expect(pathItem?.type).toBe('object');
+      expect(pathItem?.origin).toBe('value');
+      expect(pathItem?.input).toBe(input);
+      expect(pathItem?.key).toBe('constructor');
+      expect(pathItem?.value).toBeUndefined();
+    });
+
+    // Hint: See the previous test; a throwing accessor at a numeric index
+    // is treated the same way as one on an object's own property.
+    test('for array with a throwing index getter', () => {
+      const input: unknown[] = [1, 2];
+      Object.defineProperty(input, 0, {
+        enumerable: true,
+        configurable: true,
+        get() {
+          throw new Error('should be caught, not escape ~run');
+        },
+      });
+      let result: FailureDataset<InferIssue<typeof schema>> | undefined;
+      expect(() => {
+        result = schema['~run']({ value: input }, {}) as FailureDataset<
+          InferIssue<typeof schema>
+        >;
+      }).not.toThrow();
+      expect(result?.typed).toBe(false);
+      expect(result?.issues).toHaveLength(1);
+      expect(result?.issues?.[0].received).toBe('an unreadable value');
+      expect(result?.issues?.[0].path).toHaveLength(1);
+      const pathItem = result?.issues?.[0].path?.[0];
+      expect(pathItem?.type).toBe('array');
+      expect(pathItem?.origin).toBe('value');
+      expect(pathItem?.input).toBe(input);
+      expect(pathItem?.key).toBe(0);
+      expect(pathItem?.value).toBeUndefined();
+    });
   });
 
   describe('should reject circular references', () => {

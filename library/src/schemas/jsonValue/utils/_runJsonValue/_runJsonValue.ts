@@ -140,15 +140,30 @@ export function _runJsonValue(
         // Hint: `dataset.value` is left untouched, so the input array itself
         // is returned as is, unmodified
         for (let key = 0; key < input.length; key++) {
-          const value: unknown = input[key];
-          const itemDataset = _runJsonValue(
-            schema,
-            { value },
-            config,
-            visiting,
-            validated,
-            invalid
-          );
+          // Hint: Reading a numeric index can invoke a hostile accessor
+          // (for example a throwing getter defined via
+          // `Object.defineProperty`) the same way reading an object's own
+          // property can. Such a failure is treated as an invalid item, not
+          // as a reason to let the exception escape and abort validation of
+          // the entire input.
+          let value: unknown;
+          let itemDataset: OutputDataset<JsonValue, JsonValueIssue>;
+          try {
+            value = input[key];
+            itemDataset = _runJsonValue(
+              schema,
+              { value },
+              config,
+              visiting,
+              validated,
+              invalid
+            );
+          } catch {
+            itemDataset = {} as OutputDataset<JsonValue, JsonValueIssue>;
+            _addIssue(schema, 'type', itemDataset, config, {
+              received: 'an unreadable value',
+            });
+          }
 
           // If there are issues, capture them
           if (itemDataset.issues) {
@@ -240,17 +255,30 @@ export function _runJsonValue(
       // Hint: `dataset.value` is left untouched, so the input object itself
       // is returned as is, unmodified, and no key (including `__proto__`,
       // `prototype`, and `constructor`) is ever excluded
+      // Hint: Reading an own property (including `constructor`) can invoke
+      // a hostile accessor, enumerable or not, that throws. Such a failure
+      // is treated as an invalid entry, not as a reason to let the
+      // exception escape and abort validation of the entire input.
       for (const key in input) {
         if (Object.prototype.hasOwnProperty.call(input, key)) {
-          const value: unknown = input[key as keyof typeof input];
-          const entryDataset = _runJsonValue(
-            schema,
-            { value },
-            config,
-            visiting,
-            validated,
-            invalid
-          );
+          let value: unknown;
+          let entryDataset: OutputDataset<JsonValue, JsonValueIssue>;
+          try {
+            value = input[key as keyof typeof input];
+            entryDataset = _runJsonValue(
+              schema,
+              { value },
+              config,
+              visiting,
+              validated,
+              invalid
+            );
+          } catch {
+            entryDataset = {} as OutputDataset<JsonValue, JsonValueIssue>;
+            _addIssue(schema, 'type', entryDataset, config, {
+              received: 'an unreadable value',
+            });
+          }
 
           // If there are issues, capture them
           if (entryDataset.issues) {
