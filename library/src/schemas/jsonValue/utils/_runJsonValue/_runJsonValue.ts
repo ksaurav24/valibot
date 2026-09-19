@@ -136,77 +136,95 @@ export function _runJsonValue(
         // @ts-expect-error
         dataset.typed = true;
 
-        // Check each array item recursively by reusing this same schema
-        // Hint: `dataset.value` is left untouched, so the input array itself
-        // is returned as is, unmodified
-        for (let key = 0; key < input.length; key++) {
-          // Hint: Reading a numeric index can invoke a hostile accessor
-          // (for example a throwing getter defined via
-          // `Object.defineProperty`) the same way reading an object's own
-          // property can. Such a failure is treated as an invalid item, not
-          // as a reason to let the exception escape and abort validation of
-          // the entire input.
-          let value: unknown;
-          let itemDataset: OutputDataset<JsonValue, JsonValueIssue>;
-          try {
-            value = input[key];
-            itemDataset = _runJsonValue(
-              schema,
-              { value },
-              config,
-              visiting,
-              validated,
-              invalid
-            );
-          } catch {
-            itemDataset = {} as OutputDataset<JsonValue, JsonValueIssue>;
-            _addIssue(schema, 'type', itemDataset, config, {
-              received: 'an unreadable value',
-            });
-          }
+        // Hint: The loop below is wrapped in its own `try`/`finally`,
+        // separate from the per-item `try`/`catch` inside it: reading
+        // `input.length` (in the loop condition, re-evaluated every
+        // iteration) can itself invoke a hostile accessor and throw,
+        // outside the per-item guard. Without the `finally`, such a throw
+        // would skip `visiting.delete(input)` below and leave `input`
+        // stuck on the active recursion path, causing a later, non-cyclic
+        // sibling reference to `input` to be misreported as circular.
+        try {
+          // Check each array item recursively by reusing this same schema
+          // Hint: `dataset.value` is left untouched, so the input array
+          // itself is returned as is, unmodified
+          for (let key = 0; key < input.length; key++) {
+            // Hint: Reading a numeric index can invoke a hostile accessor
+            // (for example a throwing getter defined via
+            // `Object.defineProperty`) the same way reading an object's
+            // own property can. Such a failure is treated as an invalid
+            // item, not as a reason to let the exception escape and abort
+            // validation of the entire input.
+            let value: unknown;
+            let itemDataset: OutputDataset<JsonValue, JsonValueIssue>;
+            try {
+              value = input[key];
+              itemDataset = _runJsonValue(
+                schema,
+                { value },
+                config,
+                visiting,
+                validated,
+                invalid
+              );
+            } catch {
+              itemDataset = {} as OutputDataset<JsonValue, JsonValueIssue>;
+              _addIssue(schema, 'type', itemDataset, config, {
+                received: 'an unreadable value',
+              });
+            }
 
-          // If there are issues, capture them
-          if (itemDataset.issues) {
-            // Create array path item
-            const pathItem: ArrayPathItem = {
-              type: 'array',
-              origin: 'value',
-              input,
-              key,
-              value,
-            };
+            // If there are issues, capture them
+            if (itemDataset.issues) {
+              // Create array path item
+              const pathItem: ArrayPathItem = {
+                type: 'array',
+                origin: 'value',
+                input,
+                key,
+                value,
+              };
 
-            // Add modified item dataset issues to issues
-            for (const issue of itemDataset.issues) {
-              if (issue.path) {
-                issue.path.unshift(pathItem);
-              } else {
+              // Add modified item dataset issues to issues
+              for (const issue of itemDataset.issues) {
+                if (issue.path) {
+                  issue.path.unshift(pathItem);
+                } else {
+                  // @ts-expect-error
+                  issue.path = [pathItem];
+                }
                 // @ts-expect-error
-                issue.path = [pathItem];
+                dataset.issues?.push(issue);
               }
-              // @ts-expect-error
-              dataset.issues?.push(issue);
-            }
-            if (!dataset.issues) {
-              // @ts-expect-error
-              dataset.issues = itemDataset.issues;
+              if (!dataset.issues) {
+                // @ts-expect-error
+                dataset.issues = itemDataset.issues;
+              }
+
+              // If necessary, abort early
+              if (config.abortEarly) {
+                dataset.typed = false;
+                break;
+              }
             }
 
-            // If necessary, abort early
-            if (config.abortEarly) {
+            // If not typed, set typed to `false`
+            if (!itemDataset.typed) {
               dataset.typed = false;
-              break;
             }
           }
-
-          // If not typed, set typed to `false`
-          if (!itemDataset.typed) {
-            dataset.typed = false;
-          }
+        } catch {
+          // Hint: Something outside the per-item guard threw, for example
+          // reading `input.length` itself. Treat the whole array as
+          // invalid instead of leaving it partially walked.
+          _addIssue(schema, 'type', dataset, config, {
+            received: 'an unreadable value',
+          });
+        } finally {
+          // Input is no longer on the active recursion path, whether the
+          // loop completed normally, was aborted early, or threw
+          visiting.delete(input);
         }
-
-        // Input is no longer on the active recursion path
-        visiting.delete(input);
 
         // Remember the outcome for any other reference to input, so it is
         // not re-walked
@@ -259,70 +277,89 @@ export function _runJsonValue(
       // a hostile accessor, enumerable or not, that throws. Such a failure
       // is treated as an invalid entry, not as a reason to let the
       // exception escape and abort validation of the entire input.
-      for (const key in input) {
-        if (Object.prototype.hasOwnProperty.call(input, key)) {
-          let value: unknown;
-          let entryDataset: OutputDataset<JsonValue, JsonValueIssue>;
-          try {
-            value = input[key as keyof typeof input];
-            entryDataset = _runJsonValue(
-              schema,
-              { value },
-              config,
-              visiting,
-              validated,
-              invalid
-            );
-          } catch {
-            entryDataset = {} as OutputDataset<JsonValue, JsonValueIssue>;
-            _addIssue(schema, 'type', entryDataset, config, {
-              received: 'an unreadable value',
-            });
-          }
+      // Hint: The loop below is wrapped in its own `try`/`finally`,
+      // separate from the per-entry `try`/`catch` inside it: enumerating a
+      // hostile `Proxy`'s own keys, or checking whether it owns one (in
+      // the `for...in` loop and `hasOwnProperty` call themselves), can
+      // also throw, outside the per-entry guard. Without the `finally`,
+      // such a throw would skip `visiting.delete(input)` below and leave
+      // `input` stuck on the active recursion path, causing a later,
+      // non-cyclic sibling reference to `input` to be misreported as
+      // circular.
+      try {
+        for (const key in input) {
+          if (Object.prototype.hasOwnProperty.call(input, key)) {
+            let value: unknown;
+            let entryDataset: OutputDataset<JsonValue, JsonValueIssue>;
+            try {
+              value = input[key as keyof typeof input];
+              entryDataset = _runJsonValue(
+                schema,
+                { value },
+                config,
+                visiting,
+                validated,
+                invalid
+              );
+            } catch {
+              entryDataset = {} as OutputDataset<JsonValue, JsonValueIssue>;
+              _addIssue(schema, 'type', entryDataset, config, {
+                received: 'an unreadable value',
+              });
+            }
 
-          // If there are issues, capture them
-          if (entryDataset.issues) {
-            // Create object path item
-            const pathItem: ObjectPathItem = {
-              type: 'object',
-              origin: 'value',
-              input: input as Record<string, unknown>,
-              key,
-              value,
-            };
+            // If there are issues, capture them
+            if (entryDataset.issues) {
+              // Create object path item
+              const pathItem: ObjectPathItem = {
+                type: 'object',
+                origin: 'value',
+                input: input as Record<string, unknown>,
+                key,
+                value,
+              };
 
-            // Add modified entry dataset issues to issues
-            for (const issue of entryDataset.issues) {
-              if (issue.path) {
-                issue.path.unshift(pathItem);
-              } else {
+              // Add modified entry dataset issues to issues
+              for (const issue of entryDataset.issues) {
+                if (issue.path) {
+                  issue.path.unshift(pathItem);
+                } else {
+                  // @ts-expect-error
+                  issue.path = [pathItem];
+                }
                 // @ts-expect-error
-                issue.path = [pathItem];
+                dataset.issues?.push(issue);
               }
-              // @ts-expect-error
-              dataset.issues?.push(issue);
-            }
-            if (!dataset.issues) {
-              // @ts-expect-error
-              dataset.issues = entryDataset.issues;
+              if (!dataset.issues) {
+                // @ts-expect-error
+                dataset.issues = entryDataset.issues;
+              }
+
+              // If necessary, abort early
+              if (config.abortEarly) {
+                dataset.typed = false;
+                break;
+              }
             }
 
-            // If necessary, abort early
-            if (config.abortEarly) {
+            // If not typed, set typed to `false`
+            if (!entryDataset.typed) {
               dataset.typed = false;
-              break;
             }
-          }
-
-          // If not typed, set typed to `false`
-          if (!entryDataset.typed) {
-            dataset.typed = false;
           }
         }
+      } catch {
+        // Hint: Something outside the per-entry guard threw, for example
+        // enumerating `input`'s own keys itself. Treat the whole object as
+        // invalid instead of leaving it partially walked.
+        _addIssue(schema, 'type', dataset, config, {
+          received: 'an unreadable value',
+        });
+      } finally {
+        // Input is no longer on the active recursion path, whether the
+        // loop completed normally, was aborted early, or threw
+        visiting.delete(input);
       }
-
-      // Input is no longer on the active recursion path
-      visiting.delete(input);
 
       // Remember the outcome for any other reference to input, so it is
       // not re-walked

@@ -733,6 +733,63 @@ describe('jsonValue', () => {
       expect(pathItem?.key).toBe(0);
       expect(pathItem?.value).toBeUndefined();
     });
+
+    // Hint: This documents that a throw from outside the per-item guard
+    // (here, reading `.length` again on the loop's second iteration,
+    // rather than reading an item itself) still leaves `input` correctly
+    // removed from the active recursion path. Without cleaning it up in a
+    // `finally`, a later, non-cyclic sibling reference to the same array
+    // would be misreported as a circular reference instead of getting its
+    // own, independent "an unreadable value" issue.
+    test('for array whose length getter throws mid-walk, reused as a sibling', () => {
+      const target = [1, 2, 3];
+      let calls = 0;
+      const hostileArray = new Proxy(target, {
+        get(targetArray, property, receiver) {
+          if (property === 'length') {
+            calls++;
+            if (calls > 1) {
+              throw new Error('should be caught, not leak visiting state');
+            }
+          }
+          return Reflect.get(targetArray, property, receiver);
+        },
+      });
+      const input = [hostileArray, 'marker', hostileArray];
+      const result = schema['~run']({ value: input }, {});
+      expect(result.typed).toBe(false);
+      expect(result.issues).toHaveLength(2);
+      expect(result.issues?.[0].received).toBe('an unreadable value');
+      expect(result.issues?.[0].path?.[0].key).toBe(0);
+      expect(result.issues?.[1].received).toBe('an unreadable value');
+      expect(result.issues?.[1].path?.[0].key).toBe(2);
+    });
+
+    // Hint: See the previous test; enumerating a hostile object's own keys
+    // can itself throw, outside the per-entry guard, and must leave
+    // `input` correctly removed from the active recursion path too.
+    test('for object whose own keys cannot be enumerated, reused as a sibling', () => {
+      const hostileObject = new Proxy(
+        { a: 1 },
+        {
+          ownKeys() {
+            throw new Error('should be caught, not leak visiting state');
+          },
+        }
+      );
+      const input = {
+        first: hostileObject,
+        marker: 'x',
+        second: hostileObject,
+      };
+      const result = schema['~run']({ value: input }, {});
+      expect(result.typed).toBe(false);
+      expect(result.issues).toHaveLength(2);
+      expect(result.issues?.[0].received).toBe('an unreadable value');
+      expect(result.issues?.[0].path?.[0].key).toBe('first');
+      expect(result.issues?.[1].received).toBe('an unreadable value');
+      expect(result.issues?.[1].path?.[0].key).toBe('second');
+    });
   });
 
   describe('should reject circular references', () => {
