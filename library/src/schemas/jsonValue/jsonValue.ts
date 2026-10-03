@@ -93,19 +93,13 @@ export interface JsonValueSchema<
  * with no own enumerable properties, are rejected with an issue, since the
  * input is never copied and so could otherwise be returned as a live
  * instance typed as `JsonValue`. This plain-object and plain-array check is
- * a heuristic for ordinary, non-adversarial input (such as a `Date` passed
- * in by mistake); it is not a sound, attacker-proof guarantee, since a
- * `Proxy` can fake its own prototype, or a class's prototype chain can be
- * deliberately shortened to look plain. An object or array that
- * references itself, directly or through a nested value, is rejected with
- * an issue instead of being followed. A value referenced from many places
- * (for example a diamond-shaped or deeply reused object graph) is walked
- * only once if it is valid, but reports one issue per distinct reference
- * to it if it is invalid, since each reference has its own path from the
- * root; so untrusted input should have both its depth and its overall
- * structural branching bounded before parsing, as very deeply nested input
- * can exceed the call stack, and an invalid value reachable by very many
- * distinct paths can produce a correspondingly large number of issues.
+ * a heuristic for ordinary input, such as a `Date` passed in by mistake.
+ * An object or array that references itself, directly or through a nested
+ * value, is rejected with an issue instead of being followed. A valid value
+ * referenced from many places is walked only once, while an invalid value
+ * is walked for each reference so its issues contain the correct path. Very
+ * deeply nested input can exceed the call stack, so untrusted input should
+ * have its depth bounded before parsing.
  *
  * @returns A JSON value schema.
  */
@@ -134,14 +128,7 @@ export function jsonValue(
     async: false,
     message,
     '~run'(dataset, config) {
-      return _runJsonValue(
-        this,
-        dataset,
-        config,
-        new WeakSet(),
-        new WeakSet(),
-        new WeakMap()
-      );
+      return _runJsonValue(this, dataset, config);
     },
   });
 }

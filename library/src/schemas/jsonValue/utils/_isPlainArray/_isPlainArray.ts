@@ -7,9 +7,8 @@ import { _isPlainObject } from '../_isPlainObject/index.ts';
  * though it may carry extra behavior or state beyond its indexed items.
  *
  * Hint: The caller already established `input` is a real array via
- * `Array.isArray`, which (unlike reading `input`'s prototype) cannot be
- * spoofed by a `Proxy`. So this checks that its prototype is itself a real
- * array too, via that same `Array.isArray` check (this realm's real
+ * `Array.isArray`. This checks that its prototype is itself a real array too,
+ * via that same `Array.isArray` check (this realm's real
  * `Array.prototype`, or a cross-realm equivalent, is itself an array
  * exotic object, whereas an `Array` subclass's prototype, or an ordinary
  * object substituted as the prototype, is not), and that it is otherwise
@@ -20,10 +19,6 @@ import { _isPlainObject } from '../_isPlainObject/index.ts';
  * though such an array is a rare, deliberate construction rather than
  * something `JSON.parse` would ever produce.
  *
- * Hint: Same limitation as `_isPlainObject`: a `Proxy` wrapping a real
- * `Array` subclass instance can still fake its own `getPrototypeOf` result
- * to look like a plain array.
- *
  * @param input The array to check.
  *
  * @returns Whether the array is a plain array.
@@ -32,13 +27,8 @@ import { _isPlainObject } from '../_isPlainObject/index.ts';
  */
 // @__NO_SIDE_EFFECTS__
 export function _isPlainArray(input: object): boolean {
-  try {
-    const proto: unknown = Object.getPrototypeOf(input);
-    return (
-      proto === null ||
-      (Array.isArray(proto) && _isPlainObject(proto as object))
-    );
-  } catch {
-    return false;
-  }
+  const proto: unknown = Object.getPrototypeOf(input);
+  return (
+    proto === null || (Array.isArray(proto) && _isPlainObject(proto as object))
+  );
 }

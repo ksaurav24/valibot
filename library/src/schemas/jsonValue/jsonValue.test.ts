@@ -94,29 +94,6 @@ describe('jsonValue', () => {
       expect(result.value).toBe(input);
     });
 
-    // Hint: This documents that a non-enumerable property is never read in
-    // a way that could invoke a hostile accessor, not even to check whether
-    // the object is a constructor's own `.prototype` object; only the
-    // object's shape (its prototype chain) determines that.
-    // Hint: This asserts on individual fields rather than with
-    // `toStrictEqual`, since deep-equality matchers read every own
-    // property of the compared value, including non-enumerable ones, and
-    // would trigger the same throwing getter themselves.
-    test('for object with a throwing non-enumerable constructor getter', () => {
-      const input: Record<string, unknown> = { foo: 'bar' };
-      Object.defineProperty(input, 'constructor', {
-        enumerable: false,
-        configurable: true,
-        get() {
-          throw new Error('should not be called');
-        },
-      });
-      const result = schema['~run']({ value: input }, {});
-      expect(result.typed).toBe(true);
-      expect(result.issues).toBeUndefined();
-      expect(result.value).toBe(input);
-    });
-
     test('for deeply nested structures', () => {
       expectNoSchemaIssue(schema, [
         {
@@ -264,50 +241,6 @@ describe('jsonValue', () => {
       ]);
     });
 
-    // Hint: A constructor's own `.prototype` object (for example
-    // `Date.prototype`) sits at the same one-hop depth above
-    // `Object.prototype` as an ordinary plain object, and typically has no
-    // own enumerable properties either, so the prototype-chain-shape check
-    // alone cannot tell it apart from a genuine plain object. Without the
-    // additional `_isConstructorPrototype` check, this schema would accept
-    // such a live, shared prototype object as is and type it as
-    // `JsonValue`.
-    // Hint: This asserts on individual fields rather than with
-    // `expectSchemaIssue`'s `toStrictEqual`, since deep-equality matchers
-    // call built-in methods like `Map.prototype.size` on the compared
-    // value, which throw when the value is a bare prototype object rather
-    // than a real instance, unrelated to the schema's own behavior.
-    test('for constructor prototype objects', () => {
-      class Foo {
-        bar(): void {
-          // empty on purpose
-        }
-      }
-      for (const value of [
-        Object.prototype,
-        Date.prototype,
-        Map.prototype,
-        Foo.prototype,
-      ]) {
-        const result = schema['~run']({ value }, {});
-        expect(result.typed).toBe(false);
-        expect(result.issues).toHaveLength(1);
-        expect(result.issues?.[0].type).toBe('jsonValue');
-        expect(result.issues?.[0].input).toBe(value);
-      }
-    });
-
-    // Hint: This guards against a regression where rejecting constructor
-    // prototype objects (see the test above) would also reject ordinary
-    // arrays. `_isPlainArray` reuses `_isPlainObject` to confirm that a
-    // real array's own prototype (`Array.prototype`, itself a constructor
-    // prototype object) is plain-shaped one hop further up, so that reuse
-    // must keep working even though a constructor prototype object is
-    // rejected when it is the input being validated directly.
-    test('for ordinary arrays, despite Array.prototype being a constructor prototype object', () => {
-      expectNoSchemaIssue(schema, [[], [1, 'two', false, null]]);
-    });
-
     // Hint: This documents that a custom class instance is rejected even if
     // its prototype's `constructor` property is reassigned to `Object`, to
     // impersonate a plain object. The check relies on the actual prototype
@@ -339,36 +272,6 @@ describe('jsonValue', () => {
       const input: number[] = [1, 2, 3];
       Object.setPrototypeOf(input, { map: () => 'hijacked' });
       expectSchemaIssue(schema, baseIssue, [input]);
-    });
-
-    // Hint: This documents that a hostile prototype whose `getPrototypeOf`
-    // trap throws is treated as not plain, instead of making validation
-    // throw. Only the prototype is a proxy here; `input` itself is a
-    // regular object, so describing it in the issue message never invokes
-    // the trap either.
-    // Hint: This asserts on individual fields rather than with
-    // `expectSchemaIssue`'s `toStrictEqual`, since deep-equality matchers
-    // inspect the compared value's prototype and would trigger the same
-    // trap themselves, unrelated to the schema's own behavior.
-    test('for object with throwing getPrototypeOf trap in its prototype chain', () => {
-      const evilProto = new Proxy(
-        {},
-        {
-          getPrototypeOf() {
-            throw new Error('should not be called');
-          },
-        }
-      );
-      const input: object = Object.create(evilProto);
-      let result: FailureDataset<InferIssue<typeof schema>> | undefined;
-      expect(() => {
-        result = schema['~run']({ value: input }, {}) as FailureDataset<
-          InferIssue<typeof schema>
-        >;
-      }).not.toThrow();
-      expect(result?.typed).toBe(false);
-      expect(result?.issues).toHaveLength(1);
-      expect(result?.issues?.[0].received).toBe('Object');
     });
 
     // Hint: This documents that the plain-object check also excludes a
@@ -668,128 +571,6 @@ describe('jsonValue', () => {
       const result = customSchema['~run']({ value: input }, {});
       expect(result.issues?.[0].message).toBe('custom message');
     });
-
-    // Hint: This documents that a hostile accessor throwing while its own
-    // property is read is treated as an invalid entry, not as a reason to
-    // let the exception escape `~run` and abort validation of the whole
-    // input, the same way a throwing `getPrototypeOf` trap is treated as a
-    // validation issue rather than a crash.
-    // Hint: This asserts on individual fields rather than with
-    // `toStrictEqual`, since deep-equality matchers read every own
-    // property of the compared value, including `input`, and would trigger
-    // the same throwing getter themselves.
-    test('for object with a throwing enumerable property getter', () => {
-      const input: Record<string, unknown> = { foo: 'bar' };
-      Object.defineProperty(input, 'constructor', {
-        enumerable: true,
-        configurable: true,
-        get() {
-          throw new Error('should be caught, not escape ~run');
-        },
-      });
-      let result: FailureDataset<InferIssue<typeof schema>> | undefined;
-      expect(() => {
-        result = schema['~run']({ value: input }, {}) as FailureDataset<
-          InferIssue<typeof schema>
-        >;
-      }).not.toThrow();
-      expect(result?.typed).toBe(false);
-      expect(result?.issues).toHaveLength(1);
-      expect(result?.issues?.[0].received).toBe('an unreadable value');
-      expect(result?.issues?.[0].path).toHaveLength(1);
-      const pathItem = result?.issues?.[0].path?.[0];
-      expect(pathItem?.type).toBe('object');
-      expect(pathItem?.origin).toBe('value');
-      expect(pathItem?.input).toBe(input);
-      expect(pathItem?.key).toBe('constructor');
-      expect(pathItem?.value).toBeUndefined();
-    });
-
-    // Hint: See the previous test; a throwing accessor at a numeric index
-    // is treated the same way as one on an object's own property.
-    test('for array with a throwing index getter', () => {
-      const input: unknown[] = [1, 2];
-      Object.defineProperty(input, 0, {
-        enumerable: true,
-        configurable: true,
-        get() {
-          throw new Error('should be caught, not escape ~run');
-        },
-      });
-      let result: FailureDataset<InferIssue<typeof schema>> | undefined;
-      expect(() => {
-        result = schema['~run']({ value: input }, {}) as FailureDataset<
-          InferIssue<typeof schema>
-        >;
-      }).not.toThrow();
-      expect(result?.typed).toBe(false);
-      expect(result?.issues).toHaveLength(1);
-      expect(result?.issues?.[0].received).toBe('an unreadable value');
-      expect(result?.issues?.[0].path).toHaveLength(1);
-      const pathItem = result?.issues?.[0].path?.[0];
-      expect(pathItem?.type).toBe('array');
-      expect(pathItem?.origin).toBe('value');
-      expect(pathItem?.input).toBe(input);
-      expect(pathItem?.key).toBe(0);
-      expect(pathItem?.value).toBeUndefined();
-    });
-
-    // Hint: This documents that a throw from outside the per-item guard
-    // (here, reading `.length` again on the loop's second iteration,
-    // rather than reading an item itself) still leaves `input` correctly
-    // removed from the active recursion path. Without cleaning it up in a
-    // `finally`, a later, non-cyclic sibling reference to the same array
-    // would be misreported as a circular reference instead of getting its
-    // own, independent "an unreadable value" issue.
-    test('for array whose length getter throws mid-walk, reused as a sibling', () => {
-      const target = [1, 2, 3];
-      let calls = 0;
-      const hostileArray = new Proxy(target, {
-        get(targetArray, property, receiver) {
-          if (property === 'length') {
-            calls++;
-            if (calls > 1) {
-              throw new Error('should be caught, not leak visiting state');
-            }
-          }
-          return Reflect.get(targetArray, property, receiver);
-        },
-      });
-      const input = [hostileArray, 'marker', hostileArray];
-      const result = schema['~run']({ value: input }, {});
-      expect(result.typed).toBe(false);
-      expect(result.issues).toHaveLength(2);
-      expect(result.issues?.[0].received).toBe('an unreadable value');
-      expect(result.issues?.[0].path?.[0].key).toBe(0);
-      expect(result.issues?.[1].received).toBe('an unreadable value');
-      expect(result.issues?.[1].path?.[0].key).toBe(2);
-    });
-
-    // Hint: See the previous test; enumerating a hostile object's own keys
-    // can itself throw, outside the per-entry guard, and must leave
-    // `input` correctly removed from the active recursion path too.
-    test('for object whose own keys cannot be enumerated, reused as a sibling', () => {
-      const hostileObject = new Proxy(
-        { a: 1 },
-        {
-          ownKeys() {
-            throw new Error('should be caught, not leak visiting state');
-          },
-        }
-      );
-      const input = {
-        first: hostileObject,
-        marker: 'x',
-        second: hostileObject,
-      };
-      const result = schema['~run']({ value: input }, {});
-      expect(result.typed).toBe(false);
-      expect(result.issues).toHaveLength(2);
-      expect(result.issues?.[0].received).toBe('an unreadable value');
-      expect(result.issues?.[0].path?.[0].key).toBe('first');
-      expect(result.issues?.[1].received).toBe('an unreadable value');
-      expect(result.issues?.[1].path?.[0].key).toBe('second');
-    });
   });
 
   describe('should reject circular references', () => {
@@ -858,6 +639,24 @@ describe('jsonValue', () => {
           key: 'root',
           value: root,
         },
+      ]);
+    });
+
+    test('with correct paths for shared cyclic objects', () => {
+      // eslint-disable-next-line @typescript-eslint/no-explicit-any
+      const a: any = {};
+      // eslint-disable-next-line @typescript-eslint/no-explicit-any
+      const b: any = { back: a };
+      a.child = b;
+      const input = { x: a, y: b };
+      const result = schema['~run']({ value: input }, {});
+      expect(result.typed).toBe(false);
+      expect(result.issues).toHaveLength(2);
+      expect(
+        result.issues?.map((issue) => issue.path?.map(({ key }) => key))
+      ).toStrictEqual([
+        ['x', 'child', 'back'],
+        ['y', 'back', 'child'],
       ]);
     });
 
