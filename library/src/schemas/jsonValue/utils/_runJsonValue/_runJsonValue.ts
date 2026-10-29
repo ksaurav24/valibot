@@ -101,14 +101,18 @@ export function _runJsonValue(
 
         // Get own enumerable keys of object, if necessary
         // Hint: Arrays are walked by index instead, so an inherited or sparse
-        // index is read just like any other index
+        // index is read just like any other index, and their length is read
+        // on each iteration, so items added while walking are checked too
         const keys = isArray ? undefined : Object.keys(input);
-        const length = keys ? keys.length : (input as unknown[]).length;
 
         // Check each array item or object entry recursively
         // Hint: `dataset.value` is left untouched, so input array or object
         // itself is returned as is, unmodified
-        for (let index = 0; index < length; index++) {
+        for (
+          let index = 0;
+          index < (keys ?? (input as unknown[])).length;
+          index++
+        ) {
           const key = keys ? keys[index] : index;
           const value: unknown = (input as Record<PropertyKey, unknown>)[key];
           const entryDataset = _runJsonValue(

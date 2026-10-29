@@ -590,6 +590,28 @@ describe('jsonValue', () => {
       ]);
     });
 
+    // Hint: This documents that an array's length is read on each
+    // iteration, so an item added while walking (here by an item getter)
+    // is checked too instead of being returned unchecked.
+    test('for an item added to an array while walking it', () => {
+      const input: unknown[] = [];
+      Object.defineProperty(input, 0, {
+        enumerable: true,
+        get() {
+          if (input.length === 1) {
+            input.push(undefined);
+          }
+          return 1;
+        },
+      });
+      const result = schema['~run']({ value: input }, {});
+      expect(result.typed).toBe(false);
+      expect(result.issues).toHaveLength(1);
+      expect(result.issues?.[0].path).toStrictEqual([
+        { type: 'array', origin: 'value', input, key: 1, value: undefined },
+      ]);
+    });
+
     test('for custom message applied to a nested issue', () => {
       const customSchema = jsonValue('custom message');
       const input = { a: [1, undefined] };
