@@ -87,21 +87,10 @@ export function _runJsonValue(
         received: 'circular reference',
       });
     } else {
-      let inputType: 'array' | 'object' | undefined;
-
-      // If input is plain array, set input type
-      if (Array.isArray(input)) {
-        if (_isPlainArray(input)) {
-          inputType = 'array';
-        }
-
-        // Otherwise, if input is plain object, set input type
-      } else if (_isPlainObject(input)) {
-        inputType = 'object';
-      }
+      const isArray = Array.isArray(input);
 
       // If input is not plain array or object, add JSON value issue
-      if (!inputType) {
+      if (isArray ? !_isPlainArray(input) : !_isPlainObject(input)) {
         _addIssue(schema, 'type', dataset, config);
       } else {
         // Track input for duration of recursion
@@ -110,116 +99,72 @@ export function _runJsonValue(
         // @ts-expect-error
         dataset.typed = true;
 
-        // If input is array, check each item recursively
-        if (inputType === 'array') {
-          const arrayInput = input as unknown[];
+        // Get own enumerable keys of object, if necessary
+        // Hint: Arrays are walked by index instead, so an inherited or sparse
+        // index is read just like any other index
+        const keys = isArray ? undefined : Object.keys(input);
+        const length = keys ? keys.length : (input as unknown[]).length;
 
-          // Hint: `dataset.value` is left untouched, so input array itself
-          // is returned as is, unmodified
-          for (let key = 0; key < arrayInput.length; key++) {
-            const value: unknown = arrayInput[key];
-            const itemDataset = _runJsonValue(
-              schema,
-              { value },
-              config,
-              visiting,
-              validated
-            );
+        // Check each array item or object entry recursively
+        // Hint: `dataset.value` is left untouched, so input array or object
+        // itself is returned as is, unmodified
+        for (let index = 0; index < length; index++) {
+          const key = keys ? keys[index] : index;
+          const value: unknown = (input as Record<PropertyKey, unknown>)[key];
+          const entryDataset = _runJsonValue(
+            schema,
+            { value },
+            config,
+            visiting,
+            validated
+          );
 
-            // If there are issues, capture them
-            if (itemDataset.issues) {
-              // Create array path item
-              const pathItem: ArrayPathItem = {
-                type: 'array',
-                origin: 'value',
-                input: arrayInput,
-                key,
-                value,
-              };
+          // If there are issues, capture them
+          if (entryDataset.issues) {
+            // Create array or object path item
+            const pathItem: ArrayPathItem | ObjectPathItem =
+              typeof key === 'number'
+                ? {
+                    type: 'array',
+                    origin: 'value',
+                    input: input as unknown[],
+                    key,
+                    value,
+                  }
+                : {
+                    type: 'object',
+                    origin: 'value',
+                    input: input as Record<string, unknown>,
+                    key,
+                    value,
+                  };
 
-              // Add modified item dataset issues to issues
-              for (const issue of itemDataset.issues) {
-                if (issue.path) {
-                  issue.path.unshift(pathItem);
-                } else {
-                  // @ts-expect-error
-                  issue.path = [pathItem];
-                }
+            // Add modified entry dataset issues to issues
+            for (const issue of entryDataset.issues) {
+              if (issue.path) {
+                issue.path.unshift(pathItem);
+              } else {
                 // @ts-expect-error
-                dataset.issues?.push(issue);
+                issue.path = [pathItem];
               }
-              if (!dataset.issues) {
-                // @ts-expect-error
-                dataset.issues = itemDataset.issues;
-              }
-
-              // If necessary, abort early
-              if (config.abortEarly) {
-                dataset.typed = false;
-                break;
-              }
+              // @ts-expect-error
+              dataset.issues?.push(issue);
+            }
+            if (!dataset.issues) {
+              // @ts-expect-error
+              dataset.issues = entryDataset.issues;
             }
 
-            // If item is not typed, mark dataset as untyped
-            if (!itemDataset.typed) {
+            // If necessary, abort early
+            if (config.abortEarly) {
               dataset.typed = false;
+              break;
             }
           }
-        } else {
-          // Check each object entry recursively
-          // Hint: Only own enumerable properties are checked, and
-          // `dataset.value` is left untouched, so input object itself is
-          // returned as is, unmodified
-          for (const key in input) {
-            if (Object.prototype.hasOwnProperty.call(input, key)) {
-              const value: unknown = input[key as keyof typeof input];
-              const entryDataset = _runJsonValue(
-                schema,
-                { value },
-                config,
-                visiting,
-                validated
-              );
 
-              // If there are issues, capture them
-              if (entryDataset.issues) {
-                // Create object path item
-                const pathItem: ObjectPathItem = {
-                  type: 'object',
-                  origin: 'value',
-                  input: input as Record<string, unknown>,
-                  key,
-                  value,
-                };
-
-                // Add modified entry dataset issues to issues
-                for (const issue of entryDataset.issues) {
-                  if (issue.path) {
-                    issue.path.unshift(pathItem);
-                  } else {
-                    // @ts-expect-error
-                    issue.path = [pathItem];
-                  }
-                  // @ts-expect-error
-                  dataset.issues?.push(issue);
-                }
-                if (!dataset.issues) {
-                  // @ts-expect-error
-                  dataset.issues = entryDataset.issues;
-                }
-
-                // If necessary, abort early
-                if (config.abortEarly) {
-                  dataset.typed = false;
-                  break;
-                }
-              }
-
-              // If entry is not typed, mark dataset as untyped
-              if (!entryDataset.typed) {
-                dataset.typed = false;
-              }
-            }
+          // If entry is not typed, mark dataset as untyped
+          if (!entryDataset.typed) {
+            dataset.typed = false;
           }
         }
 
