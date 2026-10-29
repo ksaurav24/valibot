@@ -1,5 +1,3 @@
-import { _isPlainObject } from '../_isPlainObject/index.ts';
-
 /**
  * Checks whether an array is a plain array, meaning not an instance of an
  * `Array` subclass. Since `jsonValue` never copies its input, accepting a
@@ -11,9 +9,11 @@ import { _isPlainObject } from '../_isPlainObject/index.ts';
  * via that same `Array.isArray` check (this realm's real
  * `Array.prototype`, or a cross-realm equivalent, is itself an array
  * exotic object, whereas an `Array` subclass's prototype, or an ordinary
- * object substituted as the prototype, is not), and that it is otherwise
- * plain-object-shaped one hop up, the same way this realm's real
- * `Object.prototype` is plain-shaped for a plain object. An array whose
+ * object substituted as the prototype, is not), and that its own prototype
+ * is `null` or has a `null` prototype, the same prototype chain shape that
+ * `_isPlainObject` expects one hop up. That shape is checked directly rather
+ * than via `_isPlainObject`, since `Array.prototype` is itself a prototype
+ * object, which `_isPlainObject` rejects. An array whose
  * prototype was explicitly set to `null` is also accepted, matching how a
  * plain object created with `Object.create(null)` is accepted, even
  * though such an array is a rare, deliberate construction rather than
@@ -28,7 +28,12 @@ import { _isPlainObject } from '../_isPlainObject/index.ts';
 // @__NO_SIDE_EFFECTS__
 export function _isPlainArray(input: object): boolean {
   const proto: unknown = Object.getPrototypeOf(input);
-  return (
-    proto === null || (Array.isArray(proto) && _isPlainObject(proto as object))
-  );
+  if (proto === null) {
+    return true;
+  }
+  if (!Array.isArray(proto)) {
+    return false;
+  }
+  const protoProto: object | null = Object.getPrototypeOf(proto);
+  return protoProto === null || Object.getPrototypeOf(protoProto) === null;
 }

@@ -286,6 +286,31 @@ describe('jsonValue', () => {
         iframe.remove();
       }
     });
+
+    // Hint: This documents that a prototype object itself is rejected, even
+    // though it has the same prototype chain shape as a plain object and no
+    // own enumerable properties. Accepting it would return, for example, the
+    // shared `Object.prototype` typed as `JsonValue`, so that writing to the
+    // output would pollute every object.
+    test('for prototype objects', () => {
+      class Foo {
+        bar = 'baz';
+      }
+      expectSchemaIssue(schema, baseIssue, [Object.prototype, Foo.prototype]);
+    });
+
+    // Hint: This documents that the prototype object check also excludes
+    // `Object.prototype` from another realm, not just from this one.
+    test('for prototype object from another realm', () => {
+      const iframe = document.createElement('iframe');
+      document.body.appendChild(iframe);
+      try {
+        const otherWindow = iframe.contentWindow as unknown as typeof window;
+        expectSchemaIssue(schema, baseIssue, [otherWindow.Object.prototype]);
+      } finally {
+        iframe.remove();
+      }
+    });
   });
 
   describe('should return dataset with nested issues', () => {

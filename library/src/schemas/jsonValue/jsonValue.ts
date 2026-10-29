@@ -94,6 +94,7 @@ export interface JsonValueSchema<
  * input is never copied and so could otherwise be returned as a live
  * instance typed as `JsonValue`. This plain-object and plain-array check is
  * a heuristic for ordinary input, such as a `Date` passed in by mistake.
+ * A prototype object itself, such as `Object.prototype`, is rejected too.
  * An object or array that references itself, directly or through a nested
  * value, is rejected with an issue instead of being followed. A valid value
  * referenced from many places is walked only once, while an invalid value

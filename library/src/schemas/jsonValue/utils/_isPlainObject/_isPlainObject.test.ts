@@ -16,6 +16,21 @@ describe('_isPlainObject', () => {
     expect(_isPlainObject(Object.create(proto))).toBe(true);
   });
 
+  test('should return true for object with own constructor data key', () => {
+    expect(_isPlainObject({ constructor: 'value' })).toBe(true);
+    expect(
+      _isPlainObject(Object.assign(Object.create(null), { constructor: 1 }))
+    ).toBe(true);
+  });
+
+  test('should return false for prototype objects', () => {
+    class Foo {
+      bar = 1;
+    }
+    expect(_isPlainObject(Object.prototype)).toBe(false);
+    expect(_isPlainObject(Foo.prototype)).toBe(false);
+  });
+
   test('should return false for class instance', () => {
     class Foo {
       bar = 1;
