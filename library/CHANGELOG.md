@@ -4,6 +4,7 @@ All notable changes to the library will be documented in this file.
 
 ## vX.X.X (Month DD, YYYY)
 
+- Add `jsonValue` schema to validate JSON values (pull request #1610)
 - Change `isbn`, `creditCard` and `imei` actions to check digits by character code instead of splitting and parsing the input to improve performance (pull request #1634)
 - Fix `uuid` action to reject UUIDs with a version outside 1 to 8 or a variant outside RFC 9562, while still accepting the Nil and Max UUIDs (pull request #1643)
 
@@ -11,7 +12,6 @@ All notable changes to the library will be documented in this file.
 
 - Add `codePoints`, `maxCodePoints`, `minCodePoints` and `notCodePoints` validation actions to validate the number of Unicode code points (pull request #888)
 - Add `ksuid` validation action to validate KSUIDs (pull request #1370)
-- Add `jsonValue` schema to validate JSON values (pull request #1610)
 - Change Standard Schema properties to use eager initialization for faster schema construction and replace internal `_getStandardProps` utility with `_standardSchema` (pull request #1534)
 - Change `url` action to use `URL.canParse` when available to avoid constructing URL objects (pull request #1608)
 - Fix `stringifyJson` action to preserve the dataset value when `JSON.stringify` returns `undefined` (pull request #1476)
